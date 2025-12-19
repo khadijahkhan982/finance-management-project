@@ -1,0 +1,29 @@
+{
+  "name": "typeorm",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon --watch './**/*.ts' --exec 'ts-node' src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@types/express": "^5.0.3",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "ts-node": "^10.9.2",
+    "typeorm": "^0.3.26",
+    "typescript": "^5.9.2",
+    "winston": "^3.19.0",
+    "winston3-logstash-transport": "^1.2.3"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/winston": "^2.4.4"
+  }
+}

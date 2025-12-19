@@ -1,0 +1,60 @@
+{
+  "name": "winston3-logstash-transport",
+  "version": "1.2.3",
+  "description": "A winston@3 replacement for both winston-logstash and winston-logstash-udp to facilitate either TCP or UDP traffic to logstash",
+  "main": "index.js",
+  "scripts": {
+    "test": "nyc mocha --exit",
+    "build": "gulp",
+    "fix": "gulp fix",
+    "lint": "gulp lint",
+    "coverage": "nyc --reporter=lcov mocha && cat ./coverage/lcov.info | codacy-coverage",
+    "pretty": "gulp pretty"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OutofSyncStudios/winston-logstash-transport.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "winston",
+    "winston@3",
+    "logstash",
+    "tcp",
+    "udp",
+    "transport",
+    "winston-transport",
+    "logging",
+    "winston-logstash",
+    "winston-logstash-udp"
+  ],
+  "author": "Chronosis",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/OutofSyncStudios/winston-logstash-transport/issues"
+  },
+  "homepage": "https://github.com/OutofSyncStudios/winston-logstash-transport#readme",
+  "devDependencies": {
+    "ajv": "^7.2.3",
+    "chai": "^4.3.4",
+    "codacy-coverage": "^3.4.0",
+    "eslint": "^7.22.0",
+    "gulp": "^4.0.2",
+    "gulp-eslint": "^6.0.0",
+    "gulp-jsdoc3": "^3.0.0",
+    "gulp-mocha": "^8.0.0",
+    "gulp-prettier": "^3.0.0",
+    "husky": "^5.1.3",
+    "mocha": "^8.3.2",
+    "nyc": "^15.1.0",
+    "prettier": "^2.2.1",
+    "winston": "^3.3.3"
+  },
+  "dependencies": {
+    "lodash.foreach": "^4.5.0",
+    "lodash.merge": "^4.6.2",
+    "winston-transport": "^4.4.0"
+  }
+}
