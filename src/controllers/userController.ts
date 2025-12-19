@@ -9,7 +9,6 @@ import {
 } from "../utils/authHelpers";
 const router = express.Router();
 
-
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
@@ -135,7 +134,6 @@ const user_logout = async (req: any, res: any) => {
   }
 };
 
-
 const get_user = async (req: any, res: any) => {
   const authenticatedUserId = (req as any).authenticatedUserId;
 
@@ -170,7 +168,6 @@ const get_user = async (req: any, res: any) => {
     return res.status(500).json({ message: "Internal server error." });
   }
 };
-
 
 const resend_token = async (req: any, res: any) => {
   const { email } = req.body;
@@ -211,8 +208,6 @@ const resend_token = async (req: any, res: any) => {
     return res.status(500).send({ message: "Error processing token request." });
   }
 };
-
-
 
 const update_user = async (req: any, res: any) => {
   const targetUserId = Number(req.params.userId);
