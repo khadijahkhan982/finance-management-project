@@ -40,7 +40,7 @@ const create_transaction = async (req: express.Request, res: express.Response) =
         if (!storedToken || storedToken !== sentToken) return res.status(401).send({ message: "Session mismatch." });
         
         const category = await Category.findOne({ where: { id: category_id } });
-// For testing only:
+
 const asset = await Asset.findOne({ where: { id: assetId } });
         if (!category || !asset) {
             return res.status(404).send({ message: "Category or Asset not found/unauthorized." });
