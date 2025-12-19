@@ -1,16 +1,11 @@
-import express from "express";
 import { User } from "../entities/User";
-import { protect } from "../middleware/authMiddleware";
 import { Status } from "../utils/enums";
 import {
   encrypt_password,
   generateSixDigitCode,
   decrypt_Token,
 } from "../utils/authHelpers";
-const router = express.Router();
 
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
 
 const signup = async (req: any, res: any, next: any) => {
   const { full_name, email, password, phone_number, date_of_birth } = req.body;
@@ -197,7 +192,7 @@ const resend_token = async (req: any, res: any) => {
       }
     );
 
-    console.log(`NEW Verification token for ${email}: ${newVerificationToken}`);
+    console.log(`NEW Verification token for ${email}`);
 
     return res.status(200).send({
       message:

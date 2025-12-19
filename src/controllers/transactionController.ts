@@ -1,15 +1,15 @@
 import express from "express";
+import { Between } from "typeorm";
+import { MoreThanOrEqual } from "typeorm";
 import { Transaction } from "../entities/Transaction";
 import { User } from "../entities/User";
 import { Category } from "../entities/Category";
 import { Asset } from "../entities/Asset";
-import { logger } from "../utils/logger";
-import { Between } from "typeorm";
 import { TransactionType } from "../utils/enums";
 import { decrypt_Token } from "../utils/authHelpers";
-import { MoreThanOrEqual } from "typeorm";
+import { logger } from "../utils/logger";
 
-const router = express.Router();
+
 
 const create_transaction = async (
   req: express.Request,
@@ -235,9 +235,9 @@ const get_all_transactions = async (
     page = 1,
     limit = 10,
   } = req.query;
-  const p = Number(page) || 1;
-  const l = Number(limit) || 10;
-  const skip = (p - 1) * l;
+  const pageNum = Number(page) || 1;
+  const pageLimit = Number(limit) || 10;
+  const skip = (pageNum - 1) * pageLimit;
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
     token = authHeader.split(" ")[1];
@@ -288,7 +288,7 @@ const get_all_transactions = async (
       where: whereConditions,
       relations: ["asset", "category"],
       order: { id: "ASC" },
-      take: l,
+      take: pageLimit,
       skip: skip,
     });
     return res.status(200).send({
@@ -296,9 +296,9 @@ const get_all_transactions = async (
       transactions,
       meta: {
         total_items: total,
-        total_pages: Math.ceil(total / l),
-        current_page: p,
-        per_page: l,
+        total_pages: Math.ceil(total / pageLimit),
+        current_page: pageNum,
+        per_page: pageLimit,
       },
     });
   } catch (error) {

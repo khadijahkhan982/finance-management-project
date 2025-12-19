@@ -229,9 +229,9 @@ const get_all_assets = async (req: express.Request, res: express.Response) => {
   let token = "";
   const { og_cost, curr_cost, page = 1, limit = 10 } = req.query;
 
-  const p = Number(page) || 1;
-  const l = Number(limit) || 10;
-  const skip = (p - 1) * l;
+  const pageNum = Number(page) || 1;
+  const pageLimit = Number(limit) || 10;
+  const skip = (pageNum - 1) * pageLimit;
 
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -282,7 +282,7 @@ const get_all_assets = async (req: express.Request, res: express.Response) => {
       where: whereConditions,
       relations: ["user"],
       order: { id: "ASC" },
-      take: l,
+      take: pageLimit,
       skip: skip,
     });
 
@@ -290,9 +290,9 @@ const get_all_assets = async (req: express.Request, res: express.Response) => {
       count: assets.length,
       meta: {
         total_items: total,
-        total_pages: Math.ceil(total / l),
-        current_page: p,
-        per_page: l,
+        total_pages: Math.ceil(total / pageLimit),
+        current_page: pageNum,
+        per_page: pageLimit,
       },
       assets,
     });

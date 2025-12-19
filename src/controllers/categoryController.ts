@@ -74,9 +74,9 @@ const get_all_categories = async (
 ) => {
   const { type, page = 1, limit = 2 } = req.query;
 
-  const p = Number(page);
-  const l = Number(limit);
-  const skip = (p - 1) * l;
+  const pageNum = Number(page);
+  const pageLimit = Number(limit);
+  const skip = (pageNum - 1) * pageLimit;
 
   try {
     let whereConditions: any = {};
@@ -88,7 +88,7 @@ const get_all_categories = async (
       where: whereConditions,
       select: ["id", "name", "type"],
       order: { name: "ASC" },
-      take: l,
+      take: pageLimit,
       skip: skip,
     });
     return res.status(200).send({
@@ -96,9 +96,9 @@ const get_all_categories = async (
       categories,
       meta: {
         total_items: total,
-        total_pages: Math.ceil(total / l),
-        current_page: p,
-        per_page: l,
+        total_pages: Math.ceil(total / pageLimit),
+        current_page: pageNum,
+        per_page: pageLimit,
       },
     });
   } catch (error) {
