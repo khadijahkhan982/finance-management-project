@@ -1,5 +1,6 @@
-import express from "express";
+import express, {Request, Response, NextFunction} from "express";
 import { Category } from "../entities/Category";
+import { AppDataSource } from "../index";
 
 const router = express.Router();
 
@@ -20,51 +21,89 @@ const create_category = async (req: any, res: any, next: any) => {
   }
 };
 
-const update_category = async (req: any, res: any, next: any) => {
+const update_category = async (req: express.Request, res: express.Response) => {
   const categoryId = Number(req.params.category_Id);
+  
   if (isNaN(categoryId)) {
     return res.status(400).send({ message: "Invalid category ID" });
   }
+
+  const { name, type } = req.body;
+  const updates: any = [];
+  const params: any[] = [];
+  let paramIndex = 1;
+
+  if (name) {
+    updates.push(`name = $${paramIndex++}`);
+    params.push(name);
+  }
+  if (type) {
+    updates.push(`type = $${paramIndex++}`);
+    params.push(type);
+  }
+
+  if (updates.length === 0) {
+    return res.status(400).send({ message: "No valid fields to update." });
+  }
+
+  const queryRunner = AppDataSource.createQueryRunner();
+
   try {
-    const category = await Category.getRepository().findOneBy({
-      id: categoryId,
-    });
-    if (!category) {
+    await queryRunner.connect();
+
+    // 1. Check if category exists
+    const checkSql = `SELECT id FROM "category" WHERE id = $1`;
+    const existing = await queryRunner.query(checkSql, [categoryId]);
+
+    if (existing.length === 0) {
       return res.status(404).send({ message: "Category not found" });
     }
-    const { name, type } = req.body;
-    const updates: any = {};
-    if (name) updates.name = name;
-    if (type) updates.type = type;
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).send({ message: "No valid fields to update." });
-    }
-    await Category.getRepository().update({ id: categoryId }, updates);
-    return res.status(200).send({ message: "Category updated successfully" });
+
+    // 2. Execute the Update
+    // Adding the ID to the end of the params array for the WHERE clause
+    params.push(categoryId);
+    const updateSql = `
+      UPDATE "category" 
+      SET ${updates.join(", ")} 
+      WHERE id = $${paramIndex} 
+      RETURNING *`;
+
+    const result = await queryRunner.query(updateSql, params);
+
+    return res.status(200).send({ 
+      message: "Category updated successfully", 
+      category: result[0] 
+    });
+
   } catch (err) {
-    console.error(err);
+    console.error("QueryRunner Update Error:", err);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    // 3. Always release the connection
+    await queryRunner.release();
   }
 };
-
-const get_category = async (req: any, res: any, next: any) => {
+const get_category = async (req: Request, res: Response) => {
   const categoryId = Number(req.params.category_Id);
   if (isNaN(categoryId)) {
     return res.status(400).send({ message: "Invalid category ID" });
   }
+  const queryRunner = AppDataSource.createQueryRunner();
 
   try {
-    const existing_category = await Category.getRepository().findOne({
-      select: ["id", "name", "type"],
-      where: { id: categoryId },
-    });
-    if (!existing_category) {
+    await queryRunner.connect();
+    const sql = `SELECT id, name, type FROM "category" WHERE id = $1 LIMIT 1`;
+    const result = await queryRunner.query(sql, [categoryId]);
+    if (result.length === 0) {
       return res.status(404).json({ message: "Category not found" });
     }
-    return res.status(200).send(existing_category);
+    return res.status(200).send(result[0]);
+
   } catch (err) {
-    console.error(err);
+    console.error("QueryRunner Fetch Error:", err);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
@@ -107,23 +146,33 @@ const get_all_categories = async (
   }
 };
 
-const delete_category = async (req: any, res: any, next: any) => {
+
+
+const delete_category = async (req: Request, res: Response) => {
   const categoryId = Number(req.params.category_Id);
   if (isNaN(categoryId)) {
     return res.status(400).send({ message: "Invalid category ID" });
   }
+  const queryRunner = AppDataSource.createQueryRunner();
+
   try {
-    const category = await Category.getRepository().findOneBy({
-      id: categoryId,
-    });
-    if (!category) {
+    await queryRunner.connect();
+    const checkSql = `SELECT id FROM "category" WHERE id = $1`;
+    const existing = await queryRunner.query(checkSql, [categoryId]);
+
+    if (existing.length === 0) {
       return res.status(404).send({ message: "Category not found" });
     }
-    await Category.getRepository().delete({ id: categoryId });
+    const deleteSql = `DELETE FROM "category" WHERE id = $1`;
+    await queryRunner.query(deleteSql, [categoryId]);
+
     return res.status(200).send({ message: "Category deleted successfully" });
+
   } catch (err) {
-    console.error(err);
+    console.error("QueryRunner Delete Error:", err);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
