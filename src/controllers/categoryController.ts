@@ -1,5 +1,6 @@
 import express from "express";
 import { Category } from "../entities/Category";
+import { AppDataSource } from "../index";
 
 const router = express.Router();
 
