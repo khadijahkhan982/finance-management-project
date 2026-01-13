@@ -68,29 +68,34 @@ const get_category = async (req: any, res: any, next: any) => {
   }
 };
 
-const get_all_categories = async (
-  req: express.Request,
-  res: express.Response
-) => {
+const get_all_categories = async (req: express.Request, res: express.Response) => {
   const { type, page = 1, limit = 2 } = req.query;
 
   const pageNum = Number(page);
   const pageLimit = Number(limit);
   const skip = (pageNum - 1) * pageLimit;
 
+  const queryRunner = AppDataSource.createQueryRunner();
+
   try {
-    let whereConditions: any = {};
+    await queryRunner.connect();
+
+    let query = `SELECT id, name, type FROM category`;
+    let countQuery = `SELECT COUNT(*) as total FROM category`;
+    let params: any[] = [];
 
     if (type) {
-      whereConditions.type = type;
+      query += ` WHERE type = $1`;
+      countQuery += ` WHERE type = $1`;
+      params.push(type);
     }
-    const [categories, total] = await Category.findAndCount({
-      where: whereConditions,
-      select: ["id", "name", "type"],
-      order: { name: "ASC" },
-      take: pageLimit,
-      skip: skip,
-    });
+
+    query += ` ORDER BY name ASC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    
+    const categories = await queryRunner.query(query, [...params, pageLimit, skip]);
+    const countResult = await queryRunner.query(countQuery, params);
+    const total = parseInt(countResult[0].total);
+
     return res.status(200).send({
       current_page_count: categories.length,
       categories,
@@ -104,6 +109,8 @@ const get_all_categories = async (
   } catch (error) {
     console.error("Error in get_all_categories:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
