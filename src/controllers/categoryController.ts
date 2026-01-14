@@ -4,20 +4,29 @@ import { AppDataSource } from "../index";
 
 const router = express.Router();
 
-const create_category = async (req: any, res: any, next: any) => {
+const create_category = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const { name, type } = req.body;
+  
+  const queryRunner = AppDataSource.createQueryRunner();
+
   try {
-    const category = Category.create({
-      name,
-      type,
-    });
-    await category.save();
-    console.log("Category created:", category);
-    res.locals.category = category;
+    await queryRunner.connect();
+
+  
+    const sql = `INSERT INTO "category" (name, type) VALUES ($1, $2) RETURNING *`;
+    const result = await queryRunner.query(sql, [name, type]);
+
+    const newCategory = result[0]; // Postgres returns an array of rows
+    console.log("Category created via Query Runner:", newCategory);
+
+    res.locals.category = newCategory;
     return next();
+
   } catch (error) {
     console.error("Error creating category:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
