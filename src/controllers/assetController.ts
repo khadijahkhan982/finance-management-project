@@ -278,7 +278,6 @@ const get_all_assets = async (req: express.Request, res: express.Response) => {
     } else if (og_cost) {
       whereConditions.current_cost = MoreThanOrEqual(Number(og_cost));
     }
-
     const [assets, total] = await Asset.findAndCount({
       where: whereConditions,
       relations: ["user"],
@@ -286,7 +285,6 @@ const get_all_assets = async (req: express.Request, res: express.Response) => {
       take: pageLimit,
       skip: skip,
     });
-
     return res.status(200).send({
       count: assets.length,
       meta: {
