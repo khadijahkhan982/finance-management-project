@@ -1,21 +1,19 @@
-import express from "express";
+import express, {Request, Response} from "express";
 import { Between } from "typeorm";
 import { MoreThanOrEqual } from "typeorm";
 import { User } from "../entities/User";
 import { Asset } from "../entities/Asset";
 import { logger } from "../utils/logger";
 import { decrypt_Token } from "../utils/authHelpers";
+import { AppDataSource } from "../index";
+import { query } from "winston";
 
 
 const create_asset = async (req: express.Request, res: express.Response) => {
   const { name, og_cost } = req.body;
-  let token = "";
+    const authHeader = req.headers.authorization;
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
+   const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : "";
   const authenticatedUserId = (req as any).authenticatedUserId;
 
   if (!authenticatedUserId || !token) {
@@ -23,120 +21,108 @@ const create_asset = async (req: express.Request, res: express.Response) => {
       .status(401)
       .send({ message: "Authentication required (Token missing)." });
   }
+  const queryRunner = AppDataSource.createQueryRunner();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
+        await queryRunner.connect();
+        const userResult = await queryRunner.query(
+          'SELECT id, token FROM "user" WHERE id = $1',
+          [authenticatedUserId]
+        );
+        const user = userResult[0];
 
     if (!user) {
       return res.status(404).send({ message: "User not found." });
     }
-
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res
-        .status(400)
-        .send({ message: "Invalid JWT token signature or format." });
-    }
-
-    const sentToken = String(token).trim();
     const storedToken = user.token ? String(user.token).trim() : null;
 
-    if (!storedToken || storedToken !== sentToken) {
+    if (!storedToken || storedToken !== String(token).trim()) {
       return res.status(401).send({
         message: "Invalid token (Database mismatch). Access denied.",
       });
     }
-
     if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
       return res
         .status(401)
         .send({ message: "Your session/token has expired." });
     }
-    const asset = Asset.create({
+    const original_cost = Number(og_cost);
+    const current_cost = Number(og_cost);
+    const insertSql = `INSERT INTO "asset" (name, original_cost, current_cost, user_id) VALUES ($1, $2, $3, $4) RETURNING *`;
+    const assetResult = await queryRunner.query(insertSql, [
       name,
-      original_cost: Number(og_cost),
-      current_cost: Number(og_cost),
-      user: user,
-    });
-
-    await asset.save();
-
+      original_cost,
+      current_cost,
+      authenticatedUserId
+    ]);
+   
     return res.status(201).send({
       message: "Asset created successfully",
-      asset: {
-        id: asset.id,
-        name: asset.name,
-        current_cost: asset.current_cost,
-      },
+     asset: assetResult[0]
     });
   } catch (error) {
-    logger.error("Error in create_asset:", error);
+    console.error("Error in create_asset:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+
+  }finally{
+    await queryRunner.release();
   }
 };
 
 const update_asset = async (req: express.Request, res: express.Response) => {
-  const assetId = Number(req.params.assetId);
+  const assetId = Number(req.params.assetId || req.params.id);
   const { name } = req.body;
-  let token = "";
+
+ const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : "";
+  const authenticatedUserId = (req as any).authenticatedUserId;
 
   if (isNaN(assetId)) {
     return res.status(400).send({ message: "Invalid asset ID" });
   }
-
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  const authenticatedUserId = (req as any).authenticatedUserId;
-
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
-  }
+  const queryRunner = AppDataSource.createQueryRunner();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
+        await queryRunner.connect();
+        const userResult = await queryRunner.query(
+          'SELECT id, token FROM "user" WHERE id = $1',
+          [authenticatedUserId]
+        );
+        const user = userResult[0];
+       const storedToken = user.token ? String(user.token).trim() : null;
 
-    if (!user) {
-      return res.status(404).send({ message: "User not found." });
+    if (!storedToken || storedToken !== String(token).trim()) {
+      return res.status(401).send({
+        message: "Invalid token (Database mismatch). Access denied.",
+      });
     }
-
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token signature." });
-    }
-
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-
-    if (!storedToken || storedToken !== sentToken) {
+    if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
       return res
         .status(401)
-        .send({ message: "Invalid or expired session token." });
+        .send({ message: "Your session/token has expired." });
     }
-
     if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
       return res.status(401).send({ message: "Token has expired." });
     }
-    const asset = await Asset.findOne({
-      where: {
-        id: assetId,
-        user: { id: user.id },
-      },
-    });
-
-    if (!asset) {
-      return res
-        .status(404)
-        .send({ message: "Asset not found or access denied." });
+  const assetResult = await queryRunner.query(
+    `SELECT a.* FROM "asset" a WHERE a.id = $1 AND a.user_id = $2`,
+    [assetId, authenticatedUserId]
+  );
+  
+    if (assetResult.length === 0) {
+      return res.status(404).send({ message: "Asset not found or access denied." });
     }
+    const asset = assetResult[0];
+    await queryRunner.query(
+      `UPDATE "asset" SET name = $1 WHERE id = $2`,
+      [name || asset.name, assetId]
+    );
+    // const asset = await Asset.findOne({
+    //   where: {
+    //     id: assetId,
+    //     user: { id: user.id },
+    //   },
+    // });
     if (name) {
       asset.name = name;
     } else {
@@ -144,150 +130,91 @@ const update_asset = async (req: express.Request, res: express.Response) => {
         .status(400)
         .send({ message: "No valid fields provided for update." });
     }
-
-    await asset.save();
-
     return res.send({
       message: "Asset name updated successfully",
-      asset: {
-        id: asset.id,
-        name: asset.name,
-        current_cost: asset.current_cost,
-      },
+      
     });
   } catch (error) {
-    logger.error("Error in update_asset:", error);
+    console.error("Error in updating asset:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+  }finally{
+    await queryRunner.release();
   }
 };
 
 const get_asset = async (req: express.Request, res: express.Response) => {
-  const assetId = Number(req.params.assetId);
-  let token = "";
-
+  const assetId = Number(req.params.assetId || req.params.id);
   if (isNaN(assetId)) {
     return res.status(400).send({ message: "Invalid asset ID" });
   }
-
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
   const authenticatedUserId = (req as any).authenticatedUserId;
-
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
+  if (!authenticatedUserId) {
+    return res.status(401).send({ message: "Authentication token required." });
   }
+  const queryRunner = AppDataSource.createQueryRunner();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
+        await queryRunner.connect();
 
-    if (!user) {
-      return res.status(404).send({ message: "User not found." });
-    }
+        const sql = `SELECT a.* FROM "asset" a WHERE a.id = $1 AND a.user_id = $2 LIMIT 1`;
+        const assetResult = await queryRunner.query(sql, [
+          assetId,
+          authenticatedUserId,
+        ]);
+        if (assetResult.length === 0) {
+          return res
+            .status(404)
+            .send({ message: "Asset not found or access denied." });
+        }
+    // const asset = await Asset.findOne({
+    //   where: {
+    //     id: assetId,
+    //   },
+    // });
 
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token signature." });
-    }
+    // if (!asset) {
+    //   return res
+    //     .status(404)
+    //     .send({ message: "Asset not found or you do not have access." });
+    // }
 
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-
-    if (!storedToken || storedToken !== sentToken) {
-      return res.status(401).send({ message: "Invalid session token." });
-    }
-
-    if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
-      return res.status(401).send({ message: "Token has expired." });
-    }
-
-    const asset = await Asset.findOne({
-      where: {
-        id: assetId,
-        user: { id: user.id },
-      },
-    });
-
-    if (!asset) {
-      return res
-        .status(404)
-        .send({ message: "Asset not found or you do not have access." });
-    }
-
-    return res.status(200).send({ asset });
+    return res.status(200).send({ asset: assetResult[0] });
   } catch (error) {
-    logger.error("Error in get_asset:", error);
+    logger.error("Error in gettting asset:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
 const get_all_assets = async (req: express.Request, res: express.Response) => {
-  let token = "";
   const { og_cost, curr_cost, page = 1, limit = 10 } = req.query;
 
   const pageNum = Number(page) || 1;
   const pageLimit = Number(limit) || 10;
-  const skip = (pageNum - 1) * pageLimit;
-
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
+  const skip = (pageNum - 1) * pageLimit; 
   const authenticatedUserId = (req as any).authenticatedUserId;
-
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
-  }
+  const queryRunner = AppDataSource.createQueryRunner();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
-    if (!user) return res.status(404).send({ message: "User not found." });
+    await queryRunner.connect();
+    let query= `SELECT a.* FROM "asset" a WHERE a.user_id = $1`;
+     const params: any[] = [authenticatedUserId];
+     let paramIndex = 2;
+     if (og_cost && curr_cost) {
+            query += ` AND a.current_cost BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+            params.push(Number(og_cost), Number(curr_cost));
+          }
+         
 
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token signature." });
-    }
+      const countQuery = `SELECT COUNT(*) FROM (${query}) AS count_query`;
+      const countResult = await queryRunner.query(countQuery, params);
+      const total = parseInt(countResult[0].count);
+      query += ` ORDER BY a.id ASC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(pageLimit, skip);
 
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-    if (!storedToken || storedToken !== sentToken) {
-      return res
-        .status(401)
-        .send({ message: "Invalid session token mismatch." });
-    }
-
-    if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
-      return res.status(401).send({ message: "Token has expired." });
-    }
-
-    let whereConditions: any = { user: { id: user.id } };
-
-    if (og_cost && curr_cost) {
-      whereConditions.current_cost = Between(
-        Number(og_cost),
-        Number(curr_cost)
-      );
-    } else if (og_cost) {
-      whereConditions.current_cost = MoreThanOrEqual(Number(og_cost));
-    }
-
-    const [assets, total] = await Asset.findAndCount({
-      where: whereConditions,
-      relations: ["user"],
-      order: { id: "ASC" },
-      take: pageLimit,
-      skip: skip,
-    });
-
-    return res.status(200).send({
+      const assets = await queryRunner.query(query, params);
+      return res.status(200).send({
       count: assets.length,
       meta: {
         total_items: total,
@@ -295,82 +222,63 @@ const get_all_assets = async (req: express.Request, res: express.Response) => {
         current_page: pageNum,
         per_page: pageLimit,
       },
-      assets,
+      assets
     });
+  
   } catch (error) {
-    logger.error("Error in get_all_assets:", error);
+    logger.error("Error in getting all assets via queryRunner:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
-const delete_asset = async (req: express.Request, res: express.Response) => {
+const delete_asset = async (req: Request, res: Response) => {
   const assetId = Number(req.params.assetId);
-  let token = "";
+  const authenticatedUserId = (req as any).authenticatedUserId;
 
   if (isNaN(assetId)) {
     return res.status(400).send({ message: "Invalid asset ID" });
   }
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  const authenticatedUserId = (req as any).authenticatedUserId;
-
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
-  }
+  const queryRunner = AppDataSource.createQueryRunner();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
+    await queryRunner.connect();
+    const assetCheck = await queryRunner.query(
+      `SELECT id FROM "asset" WHERE id = $1 AND "user_id" = $2 LIMIT 1`,
+      [assetId, authenticatedUserId]
+    );
 
-    if (!user) {
-      return res.status(404).send({ message: "User not found." });
+    if (assetCheck.length === 0) {
+      return res.status(404).send({
+        message: "Asset not found or you do not have permission to delete it.",
+      });
     }
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token signature." });
-    }
+    const transactionCheck = await queryRunner.query(
+      `SELECT id FROM "transaction" WHERE "asset_id" = $1 LIMIT 1`,
+      [assetId]
+    );
 
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-
-    if (!storedToken || storedToken !== sentToken) {
-      return res
-        .status(401)
-        .send({ message: "Invalid session token mismatch." });
+    if (transactionCheck.length > 0) {
+      return res.status(400).send({
+        message: "Delete the transactions associated with this asset first.",
+      });
     }
-
-    if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
-      return res.status(401).send({ message: "Token has expired." });
-    }
-    const asset = await Asset.findOne({
-      where: {
-        id: assetId,
-        user: { id: user.id },
-      },
-    });
-
-    if (!asset) {
-      return res
-        .status(404)
-        .send({
-          message:
-            "Asset not found or you do not have permission to delete it.",
-        });
-    }
-    await asset.remove();
+    await queryRunner.query(
+      `DELETE FROM "asset" WHERE id = $1`,
+      [assetId]
+    );
 
     return res.status(200).send({
       message: "Asset deleted successfully.",
     });
+
   } catch (error) {
-    logger.error("Error in delete_asset:", error);
+    logger.error("Error in delete_asset via QueryRunner:", error);
     return res.status(500).send({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 export { create_asset, update_asset, get_asset, get_all_assets, delete_asset };
