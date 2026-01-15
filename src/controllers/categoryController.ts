@@ -4,9 +4,12 @@ import { AppDataSource } from "../index";
 
 const router = express.Router();
 
+<<<<<<< HEAD
 
 
 
+=======
+>>>>>>> 7dc221783ad0e074e4396bc0b474f4ec9a702d4f
 const create_category = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const { name, type } = req.body;
   
@@ -19,7 +22,11 @@ const create_category = async (req: express.Request, res: express.Response, next
     const sql = `INSERT INTO "category" (name, type) VALUES ($1, $2) RETURNING *`;
     const result = await queryRunner.query(sql, [name, type]);
 
+<<<<<<< HEAD
     const newCategory = result[0]; 
+=======
+    const newCategory = result[0]; // Postgres returns an array of rows
+>>>>>>> 7dc221783ad0e074e4396bc0b474f4ec9a702d4f
     console.log("Category created via Query Runner:", newCategory);
 
     res.locals.category = newCategory;

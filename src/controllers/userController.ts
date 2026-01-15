@@ -53,6 +53,14 @@ const user_auth = async (req: Request, res: Response) => {
   if (!email) {
     return res.status(400).send({ message: "Email required" });
   }
+  let token = "";
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  }
+  if (!email || !token) {
+    return res.status(400).send({ message: "Email and token are required" });
+  }
   const queryRunner = AppDataSource.createQueryRunner();
   try {
     await queryRunner.connect();
@@ -64,6 +72,24 @@ const user_auth = async (req: Request, res: Response) => {
       return res.status(404).send({ message: "User not found." });
     }
     const user = userResult[0];
+
+    try {
+      decrypt_Token(token);
+    } catch (e) {
+      return res
+        .status(400)
+        .send({ message: "Invalid JWT token signature or format." });
+    }
+    const sentToken = String(token).trim();
+    const storedToken = user.token ? String(user.token).trim() : null;
+    if (!storedToken || storedToken !== sentToken) {
+      return res.status(400).send({
+        message: "Invalid token. Note: Tokens are one-time use.",
+      });
+    }
+    if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
+      return res.status(400).send({ message: "Token expired." });
+    }
     const activeStatus = "active";
     await queryRunner.query(
       `UPDATE "user" SET status = $1, token = NULL WHERE id = $2`,
