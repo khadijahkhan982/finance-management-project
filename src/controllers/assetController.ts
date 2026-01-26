@@ -216,9 +216,9 @@ const delete_asset = async (req: AuthRequest, res: Response) => {
       .createQueryBuilder()
       .delete()
       .from(Asset)
-      .where("id = :id AND user = :userId", { 
+      .where("id = :id AND user = :user_id", { 
         id: assetId, 
-        userId: authUserId 
+        user_id: authUserId 
       })
       .execute();
 
@@ -235,7 +235,7 @@ const delete_asset = async (req: AuthRequest, res: Response) => {
     });
   } catch (error) {
     await queryRunner.rollbackTransaction();
-    console.error("Error in delete_asset:", error);
+    console.error("Error in deleting asset:", error);
     return res.status(500).send({ message: "Internal Server Error" });
   } finally {
     await queryRunner.release();
