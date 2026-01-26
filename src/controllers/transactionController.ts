@@ -12,7 +12,6 @@ import { logger } from "../utils/logger";
 import { AppDataSource } from "../index";
 
 
-
 const create_transaction = async (req: Request, res: Response) => {
   const { amount, description, transaction_type, assetId, category_id } = req.body;
   const authHeader = req.headers.authorization;
@@ -352,5 +351,5 @@ export {
   get_transaction,
   update_transaction,
   delete_transaction,
-  get_all_transactions,
+  get_all_transactions
 };
