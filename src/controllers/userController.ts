@@ -173,6 +173,7 @@ const targetUserId = Number(req.params.userId);
   try {
     const user = await User.getRepository()
       .createQueryBuilder("user")
+      //bi-directional relation
       .leftJoinAndSelect("user.transactions", "transaction")
       .leftJoinAndSelect("user.assets", "asset")
       .select([

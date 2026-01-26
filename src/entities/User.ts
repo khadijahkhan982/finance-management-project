@@ -2,7 +2,6 @@ import { Status } from "../utils/enums";
 import { Entity, UpdateDateColumn,Column, CreateDateColumn,BaseEntity, PrimaryGeneratedColumn, OneToOne, JoinColumn, ManyToOne, OneToMany} from "typeorm"
 import { Transaction } from "./Transaction";
 import { Asset } from "./Asset";
-import { Category } from "./Category";
 
 
 @Entity('user')
