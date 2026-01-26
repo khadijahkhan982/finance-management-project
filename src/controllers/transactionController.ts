@@ -8,54 +8,41 @@ import { Asset } from "../entities/Asset";
 import { TransactionType } from "../utils/enums";
 import { decrypt_Token } from "../utils/authHelpers";
 import { logger } from "../utils/logger";
+import { Request, Response} from "express";
+import { AppDataSource } from "../index";
 
 
+interface AuthRequest extends Request {
+  authenticatedUserId?: number;
+}
 
 const create_transaction = async (
-  req: express.Request,
-  res: express.Response
+req: AuthRequest, res: Response
 ) => {
   const { amount, description, transaction_type, assetId, category_id } =
     req.body;
-  let token = "";
+  
+    if(!amount || !transaction_type || !assetId || !category_id) {
+      return res.status(400).send({ message: "Required properties haven't been added." });
+    }
+ const authUserId = req.authenticatedUserId; 
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  const authenticatedUserId = (req as any).authenticatedUserId;
-
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
-  }
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
-    if (!user) return res.status(404).send({ message: "User not found." });
+      const [user, asset, category] = await Promise.all([
+      queryRunner.manager.findOneBy(User, { id: authUserId }),
+      queryRunner.manager.findOneBy(Asset, { id: assetId, user: { id: authUserId } }),
+      queryRunner.manager.findOneBy(Category, { id: category_id })
+    ]);
 
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token." });
+    if (!user || !asset || !category) {
+      await queryRunner.rollbackTransaction();
+      return res.status(404).json({ message: "User, Asset, or Category not found." });
     }
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-    if (!storedToken || storedToken !== sentToken)
-      return res.status(401).send({ message: "Session mismatch." });
-
-    const category = await Category.findOne({ where: { id: category_id } });
-
-    const asset = await Asset.findOne({ where: { id: assetId } });
-    if (!category || !asset) {
-      return res
-        .status(404)
-        .send({ message: "Category or Asset not found/unauthorized." });
-    }
-
-    const transaction = Transaction.create({
+    const transaction = queryRunner.manager.create(Transaction, {
       amount: Number(amount),
       description,
       transaction_type,
@@ -64,168 +51,158 @@ const create_transaction = async (
       category,
     });
 
+    const transactionAmount = Number(amount);
     if (transaction_type === TransactionType.deposit) {
-      asset.current_cost = Number(asset.current_cost) + Number(amount);
+      asset.current_cost = Number(asset.current_cost) + transactionAmount;
     } else if (transaction_type === TransactionType.withdrawal) {
-      asset.current_cost = Number(asset.current_cost) - Number(amount);
+      if (Number(asset.current_cost) < transactionAmount) {
+        await queryRunner.rollbackTransaction();
+        return res.status(400).json({ message: "Not enough balance." });
+      }
+      asset.current_cost = Number(asset.current_cost) - transactionAmount;
     }
+    await queryRunner.manager.save(transaction);
+    await queryRunner.manager.save(asset);
+    await queryRunner.commitTransaction();
 
-    await transaction.save();
-    await asset.save();
+    return res.status(201).json({
+      success: true,
+      message: "Transaction completed successfully",
+      new_balance: asset.current_cost,
+      transaction_id: transaction.id
+    });
 
-    return res
-      .status(201)
-      .send({ message: "Transaction successful", transaction });
   } catch (err) {
-    return res.status(500).send({ message: "Internal Server Error" });
+    await queryRunner.rollbackTransaction();
+    console.error("Transaction Error:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
 const update_transaction = async (
-  req: express.Request,
-  res: express.Response
+req: AuthRequest, res: Response
 ) => {
   const transactionId = Number(req.params.id || req.params.transactionId);
-  const {
-    amount: newAmount,
-    transaction_type: newType,
-    description,
-  } = req.body;
-  let token = "";
+  const authUserId = req.authenticatedUserId;
+  const { amount, transaction_type, description } = req.body;
 
   if (isNaN(transactionId)) {
-    return res.status(400).send({ message: "Invalid transaction ID format." });
+    return res.status(400).json({ message: "Invalid transaction ID." });
   }
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  const authenticatedUserId = (req as any).authenticatedUserId;
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
-    if (!user) return res.status(404).send({ message: "User not found." });
-
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-    if (!storedToken || storedToken !== sentToken) {
-      return res.status(401).send({ message: "Session mismatch." });
-    }
-
-    const transaction = await Transaction.findOne({
-      where: { id: transactionId, user: { id: user.id } },
+    const transaction = await queryRunner.manager.findOne(Transaction, {
+      where: { id: transactionId, user: { id: authUserId } },
       relations: ["asset"],
     });
 
     if (!transaction || !transaction.asset) {
-      return res
-        .status(404)
-        .send({ message: "Transaction not found or unauthorized." });
+      await queryRunner.rollbackTransaction();
+      return res.status(404).json({ message: "Transaction not found." });
     }
 
     const asset = transaction.asset;
-
     const oldAmount = Number(transaction.amount);
-    if (transaction.transaction_type === TransactionType.deposit) {
+    const oldType = transaction.transaction_type;
+
+    if (oldType === TransactionType.deposit) {
       asset.current_cost = Number(asset.current_cost) - oldAmount;
     } else {
       asset.current_cost = Number(asset.current_cost) + oldAmount;
     }
 
-    const finalAmount = newAmount !== undefined ? Number(newAmount) : oldAmount;
-    const finalType =
-      newType !== undefined ? newType : transaction.transaction_type;
+    if (amount !== undefined) transaction.amount = Number(amount);
+    if (transaction_type !== undefined) transaction.transaction_type = transaction_type;
+    if (description !== undefined) transaction.description = description;
 
-    if (finalType === TransactionType.deposit) {
-      asset.current_cost = Number(asset.current_cost) + finalAmount;
-    } else if (finalType === TransactionType.withdrawal) {
-      asset.current_cost = Number(asset.current_cost) - finalAmount;
+  const updatedAmount = Number(transaction.amount);
+    if (transaction.transaction_type === TransactionType.deposit) {
+      asset.current_cost = Number(asset.current_cost) + updatedAmount;
     } else {
-      return res.status(400).send({ message: "Invalid new transaction type." });
+      asset.current_cost = Number(asset.current_cost) - updatedAmount;
     }
-    transaction.amount = finalAmount;
-    transaction.transaction_type = finalType;
-    if (description) transaction.description = description;
+    if (Number(asset.current_cost) < 0) {
+      await queryRunner.rollbackTransaction();
+      return res.status(400).json({ 
+        message: "Not enough balance",
+        current_balance_before_update: oldAmount 
+      });
+    }
 
-    await transaction.save();
-    await asset.save();
+    await queryRunner.manager.save(asset);
+    await queryRunner.manager.save(transaction);
 
-    return res.send({
-      message: "Transaction updated and asset balance recalculated.",
-      newBalance: asset.current_cost,
+    await queryRunner.commitTransaction();
+
+    return res.status(200).json({
+      message: "Transaction updated and balance recalculated.",
+      new_balance: asset.current_cost,
+      transaction
     });
+
   } catch (err) {
-    console.error("Update Transaction Error:", err);
-    return res.status(500).send({ message: "Internal Server Error" });
+    await queryRunner.rollbackTransaction();
+    console.error("Error in updating transaction:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
-
-const get_transaction = async (req: express.Request, res: express.Response) => {
+const get_transaction = async (req: AuthRequest, res: Response) => {
   const transactionId = Number(req.params.transactionId || req.params.id);
-  let token = "";
+    const authUserId = req.authenticatedUserId; 
 
   if (isNaN(transactionId)) {
     return res.status(400).send({ message: "Invalid transaction ID." });
   }
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  const authenticatedUserId = (req as any).authenticatedUserId;
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
-  }
-
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
-    if (!user) return res.status(404).send({ message: "User not found." });
-
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token." });
-    }
-
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-    if (!storedToken || storedToken !== sentToken) {
-      return res.status(401).send({ message: "Session mismatch." });
-    }
-
-    const transaction = await Transaction.findOne({
-      where: {
-        id: transactionId,
-        user: { id: user.id },
-      },
-      relations: ["asset", "category", "user"],
-    });
-
+   const transaction = await Transaction.getRepository()
+      .createQueryBuilder("transaction")
+      .leftJoin("transaction.asset", "asset")
+      .leftJoin("transaction.category", "category")
+      .select([
+        "transaction.id",
+        "transaction.amount",
+        "transaction.description",
+        "transaction.transaction_type",
+        "transaction.created_at",
+        "asset.id",
+        "asset.name",
+        "category.id",
+        "category.name",
+        "category.type"
+      ])
+      .where("transaction.id = :id AND transaction.user_id = :user_id", { 
+        id: transactionId, 
+        user_id: authUserId 
+      })
+      .getOne();
     if (!transaction) {
-      return res
-        .status(404)
-        .send({ message: "Transaction not found or unauthorized." });
+      return res.status(404).json({ 
+        message: "Transaction not found or you do not have permission to view it." 
+      });
     }
 
-    return res.status(200).send({ transaction });
+    return res.status(200).json({ 
+        success: true,
+        transaction 
+    });
+
   } catch (error) {
-    logger.error("Error in getting transaction:", error);
-    return res.status(500).send({ message: "Internal Server Error" });
+    console.error("Error in getting transaction:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
-
 const get_all_transactions = async (
-  req: express.Request,
-  res: express.Response
+  req: AuthRequest, res: Response
 ) => {
-  let token = "";
   const {
     startDate,
     endDate,
@@ -234,137 +211,140 @@ const get_all_transactions = async (
     maxAmount,
     page = 1,
     limit = 10,
+    assetId
   } = req.query;
-  const pageNum = Number(page) || 1;
-  const pageLimit = Number(limit) || 10;
+  const authUserId = req.authenticatedUserId;
+  const pageNum = Math.max(1, Number(page));
+  const pageLimit = Math.max(1, Math.min(Number(limit), 100));
   const skip = (pageNum - 1) * pageLimit;
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-  const authenticatedUserId = (req as any).authenticatedUserId;
-  if (!authenticatedUserId || !token) {
-    return res.status(401).send({ message: "Authentication required." });
-  }
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
-    if (!user) return res.status(404).send({ message: "User not found." });
-    try {
-      decrypt_Token(token);
-    } catch (e) {
-      return res.status(400).send({ message: "Invalid token." });
-    }
-
-    const sentToken = String(token).trim();
-    const storedToken = user.token ? String(user.token).trim() : null;
-    if (!storedToken || storedToken !== sentToken) {
-      return res.status(401).send({ message: "Session mismatch." });
-    }
-    if (user.token_expires_at && user.token_expires_at < new Date()) {
-      return res.status(401).send({ message: "Token has expired." });
-    }
-    let whereConditions: any = {
-      user: { id: user.id },
-    };
+    const query = Transaction.getRepository()
+      .createQueryBuilder("transaction")
+      .leftJoin("transaction.asset", "asset")
+      .leftJoin("transaction.category", "category")
+      .where("transaction.user_id = :user_id", { user_id: authUserId });
 
     if (startDate && endDate) {
-      const start = new Date(startDate as string);
       const end = new Date(endDate as string);
       end.setHours(23, 59, 59, 999);
-      whereConditions.transaction_date = Between(start, end);
+      query.andWhere("transaction.created_at BETWEEN :start AND :end", {
+        start: new Date(startDate as string),
+        end: end,
+      });
+    } else if (startDate) {
+      query.andWhere("transaction.created_at >= :start", { start: new Date(startDate as string) });
     }
     if (minAmount && maxAmount) {
-      whereConditions.amount = Between(Number(minAmount), Number(maxAmount));
+      query.andWhere("transaction.amount BETWEEN :min AND :max", {
+        min: Number(minAmount),
+        max: Number(maxAmount),
+      });
     } else if (minAmount) {
-      whereConditions.amount = MoreThanOrEqual(Number(minAmount));
+      query.andWhere("transaction.amount >= :min", { min: Number(minAmount) });
     }
+
     if (transaction_type) {
-      whereConditions.transaction_type = transaction_type;
+      query.andWhere("transaction.transaction_type = :type", { type: transaction_type });
     }
-    const [transactions, total] = await Transaction.findAndCount({
-      where: whereConditions,
-      relations: ["asset", "category"],
-      order: { id: "ASC" },
-      take: pageLimit,
-      skip: skip,
-    });
-    return res.status(200).send({
-      count: transactions.length,
-      transactions,
+
+    if (assetId) {
+      query.andWhere("asset.id = :assetId", { assetId: Number(assetId) });
+    }
+    query
+      .select([
+        "transaction.id",
+        "transaction.amount",
+        "transaction.description",
+        "transaction.transaction_type",
+        "transaction.created_at",
+        "asset.id",
+        "asset.name",
+        "category.id",
+        "category.name"
+      ])
+      .orderBy("transaction.created_at", "DESC") 
+      .skip(skip)
+      .take(pageLimit);
+    const [transactions, total] = await query.getManyAndCount();
+
+    return res.status(200).json({
+      success: true,
       meta: {
         total_items: total,
         total_pages: Math.ceil(total / pageLimit),
         current_page: pageNum,
         per_page: pageLimit,
+        item_count: transactions.length
       },
+      transactions,
     });
+
   } catch (error) {
-    logger.error("Error in getting all transactions:", error);
-    return res.status(500).send({ message: "Internal Server Error" });
+    console.error("Error getting all transactions:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
+
+
+
+
 const delete_transaction = async (
-  req: express.Request,
-  res: express.Response
+  req: AuthRequest, res: Response
 ) => {
   const transactionId = Number(req.params.id || req.params.transactionId);
-  let token = "";
+  const authUserId = req.authenticatedUserId;
 
   if (isNaN(transactionId)) {
-    return res.status(400).send({ message: "Invalid transaction ID." });
+    return res.status(400).json({ message: "Invalid transaction ID format." });
   }
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  const authenticatedUserId = (req as any).authenticatedUserId;
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
   try {
-    const user = await User.getRepository().findOneBy({
-      id: authenticatedUserId,
-    });
-    if (!user) return res.status(404).send({ message: "User not found." });
-
-    const sentToken = String(token).trim();
-    if (user.token !== sentToken)
-      return res.status(401).send({ message: "Session mismatch." });
-
-    const transaction = await Transaction.findOne({
-      where: { id: transactionId, user: { id: user.id } },
+    const transaction = await queryRunner.manager.findOne(Transaction, {
+      where: { id: transactionId, user: { id: authUserId } },
       relations: ["asset"],
     });
 
     if (!transaction || !transaction.asset) {
-      return res
-        .status(404)
-        .send({ message: "Transaction not found or unauthorized." });
+      await queryRunner.rollbackTransaction();
+      return res.status(404).json({ message: "Transaction not found or unauthorized." });
     }
 
     const asset = transaction.asset;
     const amountToReverse = Number(transaction.amount);
-
     if (transaction.transaction_type === TransactionType.deposit) {
       asset.current_cost = Number(asset.current_cost) - amountToReverse;
     } else if (transaction.transaction_type === TransactionType.withdrawal) {
       asset.current_cost = Number(asset.current_cost) + amountToReverse;
     }
+    if (asset.current_cost < 0) {
+      await queryRunner.rollbackTransaction();
+      return res.status(400).json({ 
+        message: "Can't delete this transaction because it would become a negative value." 
+      });
+    }
+    await queryRunner.manager.save(asset);
+    await queryRunner.manager.remove(transaction);
 
-    await asset.save();
-    await transaction.remove();
+    await queryRunner.commitTransaction();
 
-    return res.status(200).send({
+    return res.status(200).json({
+      success: true,
       message: "Transaction deleted and asset balance restored.",
       updated_asset_cost: asset.current_cost,
     });
+
   } catch (err) {
-    console.error("Delete Transaction Error:", err);
-    return res.status(500).send({ message: "Internal Server Error" });
+    await queryRunner.rollbackTransaction();
+    console.error(" Error in deleting transaction:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 export {

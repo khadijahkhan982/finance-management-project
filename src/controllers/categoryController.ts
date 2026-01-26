@@ -2,22 +2,39 @@ import express, {Request, Response, NextFunction} from "express";
 import { Category } from "../entities/Category";
 import { AppDataSource } from "../index";
 
-const router = express.Router();
-
-const create_category = async (req: any, res: any, next: any) => {
+const create_category = async (req: Request, res: Response, next: NextFunction) => {
   const { name, type } = req.body;
+  if (!name || !type) {
+    return res.status(400).json({ message: "Name and type are required." });
+  }
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
   try {
-    const category = Category.create({
-      name,
-      type,
+    const existing = await queryRunner.manager.findOne(Category, { 
+        where: { name, type } 
     });
-    await category.save();
-    console.log("Category created:", category);
+    if (existing) {
+      await queryRunner.rollbackTransaction();
+      return res.status(400).json({ message: "Category already exists." });
+    }
+    const category = queryRunner.manager.create(Category, { name, type });
+    await queryRunner.manager.save(category);
+    await queryRunner.commitTransaction();
+
+    console.log("Category created successfully:", category.id);
     res.locals.category = category;
-    return next();
+    return res.status(201).json({ 
+    success: true, 
+    message: "Category created", 
+    data: category 
+});
   } catch (error) {
+    await queryRunner.rollbackTransaction();
     console.error("Error creating category:", error);
-    return res.status(500).send({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
+  } finally {
+    await queryRunner.release();
   }
 };
 
@@ -27,7 +44,6 @@ const update_category = async (req: express.Request, res: express.Response) => {
   if (isNaN(categoryId)) {
     return res.status(400).send({ message: "Invalid category ID" });
   }
-
   const { name, type } = req.body;
   const updates: any = [];
   const params: any[] = [];
@@ -41,45 +57,34 @@ const update_category = async (req: express.Request, res: express.Response) => {
     updates.push(`type = $${paramIndex++}`);
     params.push(type);
   }
-
   if (updates.length === 0) {
     return res.status(400).send({ message: "No valid fields to update." });
   }
-
   const queryRunner = AppDataSource.createQueryRunner();
 
   try {
     await queryRunner.connect();
-
-    // 1. Check if category exists
     const checkSql = `SELECT id FROM "category" WHERE id = $1`;
     const existing = await queryRunner.query(checkSql, [categoryId]);
 
     if (existing.length === 0) {
       return res.status(404).send({ message: "Category not found" });
     }
-
-    // 2. Execute the Update
-    // Adding the ID to the end of the params array for the WHERE clause
     params.push(categoryId);
     const updateSql = `
       UPDATE "category" 
       SET ${updates.join(", ")} 
       WHERE id = $${paramIndex} 
       RETURNING *`;
-
     const result = await queryRunner.query(updateSql, params);
-
     return res.status(200).send({ 
       message: "Category updated successfully", 
       category: result[0] 
     });
-
   } catch (err) {
     console.error("QueryRunner Update Error:", err);
     return res.status(500).send({ message: "Internal Server Error" });
   } finally {
-    // 3. Always release the connection
     await queryRunner.release();
   }
 };

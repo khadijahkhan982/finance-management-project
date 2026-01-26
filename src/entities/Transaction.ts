@@ -16,7 +16,7 @@ export class Transaction extends BaseEntity {
      @CreateDateColumn({ type: "timestamp", default: () => "CURRENT_TIMESTAMP(6)" })
        transaction_date: Date; 
 
-    @Column()
+    @Column({nullable: true})
     description: string;
 
     @Column()
