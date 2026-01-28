@@ -1,5 +1,5 @@
 import { Status } from "../utils/enums";
-import { Entity, UpdateDateColumn,Column, CreateDateColumn,BaseEntity, PrimaryGeneratedColumn, OneToOne, JoinColumn, ManyToOne, OneToMany} from "typeorm"
+import { Entity, UpdateDateColumn,Column, CreateDateColumn,BaseEntity, PrimaryGeneratedColumn, OneToOne, JoinColumn, OneToMany, Index} from "typeorm"
 import { Transaction } from "./Transaction";
 import { Asset } from "./Asset";
 import { Address } from "./Address";
@@ -13,7 +13,8 @@ export class User extends BaseEntity {
     @Column()
     full_name: string;
 
-    @Column({ unique: true , nullable:true})
+    @Column({ unique: true , nullable:false})
+    @Index()
     email: string;
 
     @Column()

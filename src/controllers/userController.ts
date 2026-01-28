@@ -30,12 +30,15 @@ const signup = async (req: any, res: any, next: any) => {
       street,
       house_number,
     } = req.body;
-    const existingUser = await User.findOneBy({ email });
+    
+    const [existingUser, encrypted_password] = await Promise.all([
+    User.findOneBy({ email }),
+    encrypt_password(password)
+  ]);
     if (existingUser) {
       return res.status(400).send({ message: "User already exists." });
     }
 
-    const encrypted_password = await encrypt_password(password);
     const verificationToken = generateSixDigitCode({ emailId: email });
     const tokenExpiresAt = new Date();
     tokenExpiresAt.setMinutes(tokenExpiresAt.getMinutes() + 10);
@@ -63,7 +66,7 @@ const signup = async (req: any, res: any, next: any) => {
       return await manager.save(User, user);
     });
 
-    console.log(`Verification token sent for ${email}`);
+    //console.log(`Verification token sent for ${email}`);
     res.locals.user = newUser;
     return next();
   } catch (error: any) {
@@ -171,12 +174,6 @@ const user_login = async (req: Request, res: Response) => {
     const user = await User.findOneBy({ email });
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ message: "Invalid email or password." });
-    }
-
-    if (user.status !== Status.is_active) {
-      return res
-        .status(403)
-        .json({ message: "Please verify your email first." });
     }
 
     const authToken = generateAuthToken({ userId: user.id });
@@ -538,40 +535,32 @@ const delete_user = async (req: AuthRequest, res: any) => {
   const authUserId = Number(req.authenticatedUserId);
 
   if (targetUserId !== authUserId) {
-    return res
-      .status(403)
-      .send({ message: "Forbidden. You can only delete your own account." });
+    return res.status(403).send({ message: "Forbidden." });
   }
 
   try {
     await queryRunnerFunc(async (manager) => {
       const user = await manager.findOne(User, {
         where: { id: targetUserId },
-        relations: ["address"],
+        select: ["address"] 
       });
 
       if (!user) throw { status: 404, message: "User not found." };
+      const addressId = user.address?.id;
 
-      const addressToDelete = user.address;
-
+  
       await manager.delete("Transaction", { user: { id: targetUserId } });
       await manager.delete("Asset", { user: { id: targetUserId } });
       await manager.delete("UserSessions", { user: { id: targetUserId } });
-      await manager.remove(User, user);
-
-      if (addressToDelete) {
-        await manager.remove(Address, addressToDelete);
+            await manager.delete(User, { id: targetUserId });
+      if (addressId) {
+        await manager.delete(Address, { id: addressId });
       }
     });
 
-    return res
-      .status(200)
-      .send({ message: "User and all history deleted successfully." });
+    return res.status(200).send({ message: "Deleted successfully." });
   } catch (error: any) {
-    console.error("Deletion failed:", error);
-    return res
-      .status(error.status || 500)
-      .send({ message: error.message || "Could not delete user." });
+    return res.status(error.status || 500).send({ message: error.message });
   }
 };
 export {
