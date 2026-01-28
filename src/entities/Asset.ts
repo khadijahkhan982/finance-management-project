@@ -1,6 +1,5 @@
 import { Entity, Column, BaseEntity, PrimaryGeneratedColumn, OneToOne, JoinColumn, ManyToOne, OneToMany, CreateDateColumn, UpdateDateColumn} from "typeorm"
 import { User } from "./User";
-import { Category } from "./Category";
 import { Transaction } from "./Transaction";
 
 

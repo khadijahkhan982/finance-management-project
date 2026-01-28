@@ -6,80 +6,68 @@ import { Asset } from "../entities/Asset";
 import { TransactionType } from "../utils/enums";
 import { Request, Response} from "express";
 import { AppDataSource } from "../index";
-
+import { queryRunnerFunc } from "../utils/query_runner";
 
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
 }
-
-const create_transaction = async (
-req: AuthRequest, res: Response
-) => {
-  const { amount, description, transaction_type, assetId, category_id } =
-    req.body;
+const create_transaction = async (req: AuthRequest, res: Response) => {
+  const { amount, description, transaction_type, assetId, category_id } = req.body;
   
-    if(!amount || !transaction_type || !assetId || !category_id) {
-      return res.status(400).send({ message: "Required properties haven't been added." });
-    }
- const authUserId = req.authenticatedUserId; 
-
-  const queryRunner = AppDataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
+  if (!amount || !transaction_type || !assetId || !category_id) {
+    return res.status(400).send({ message: "Required properties missing." });
+  }
+  const authUserId = req.authenticatedUserId;
   try {
+    const result = await queryRunnerFunc(async (manager) => {
       const [user, asset, category] = await Promise.all([
-      queryRunner.manager.findOneBy(User, { id: authUserId }),
-      queryRunner.manager.findOneBy(Asset, { id: assetId, user: { id: authUserId } }),
-      queryRunner.manager.findOneBy(Category, { id: category_id })
-    ]);
-
-    if (!user || !asset || !category) {
-      await queryRunner.rollbackTransaction();
-      return res.status(404).json({ message: "User, Asset, or Category not found." });
-    }
-    const transaction = queryRunner.manager.create(Transaction, {
-      amount: Number(amount),
-      description,
-      transaction_type,
-      user,
-      asset,
-      category,
-    });
-
-    const transactionAmount = Number(amount);
-    if (transaction_type === TransactionType.deposit) {
-      asset.current_cost = Number(asset.current_cost) + transactionAmount;
-    } else if (transaction_type === TransactionType.withdrawal) {
-      if (Number(asset.current_cost) < transactionAmount) {
-        await queryRunner.rollbackTransaction();
-        return res.status(400).json({ message: "Not enough balance." });
+        manager.findOneBy(User, { id: authUserId }),
+        manager.findOneBy(Asset, { id: assetId, user: { id: authUserId } }),
+        manager.findOneBy(Category, { id: category_id })
+      ]);
+      if (!user || !asset || !category) {
+        throw { status: 404, message: "User, Asset, or Category not found." };
       }
-      asset.current_cost = Number(asset.current_cost) - transactionAmount;
-    }
-    await queryRunner.manager.save(transaction);
-    await queryRunner.manager.save(asset);
-    await queryRunner.commitTransaction();
 
+      const transactionAmount = Number(amount);
+            if (transaction_type === TransactionType.deposit) {
+        asset.current_cost = Number(asset.current_cost) + transactionAmount;
+      } else if (transaction_type === TransactionType.withdrawal) {
+        if (Number(asset.current_cost) < transactionAmount) {
+          throw { status: 400, message: "Not enough balance." };
+        }
+        asset.current_cost = Number(asset.current_cost) - transactionAmount;
+      }
+      const transaction = manager.create(Transaction, {
+        amount: transactionAmount,
+        description,
+        transaction_type,
+        user,
+        asset,
+        category,
+      });
+      await manager.save([transaction, asset]);
+
+      return {
+        new_balance: asset.current_cost,
+        transaction_id: transaction.id
+      };
+    });
     return res.status(201).json({
       success: true,
       message: "Transaction completed successfully",
-      new_balance: asset.current_cost,
-      transaction_id: transaction.id
+      ...result
     });
-
-  } catch (err) {
-    await queryRunner.rollbackTransaction();
+  } catch (err: any) {
+    const statusCode = err.status || 500;
+    const message = err.message || "Internal Server Error";
+    
     console.error("Transaction Error:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
-  } finally {
-    await queryRunner.release();
+    return res.status(statusCode).json({ message });
   }
 };
 
-const update_transaction = async (
-req: AuthRequest, res: Response
-) => {
+const update_transaction = async (req: AuthRequest, res: Response) => {
   const transactionId = Number(req.params.id || req.params.transactionId);
   const authUserId = req.authenticatedUserId;
   const { amount, transaction_type, description } = req.body;
@@ -88,68 +76,66 @@ req: AuthRequest, res: Response
     return res.status(400).json({ message: "Invalid transaction ID." });
   }
 
-  const queryRunner = AppDataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
   try {
-    const transaction = await queryRunner.manager.findOne(Transaction, {
-      where: { id: transactionId, user: { id: authUserId } },
-      relations: ["asset"],
-    });
-
-    if (!transaction || !transaction.asset) {
-      await queryRunner.rollbackTransaction();
-      return res.status(404).json({ message: "Transaction not found." });
-    }
-
-    const asset = transaction.asset;
-    const oldAmount = Number(transaction.amount);
-    const oldType = transaction.transaction_type;
-
-    if (oldType === TransactionType.deposit) {
-      asset.current_cost = Number(asset.current_cost) - oldAmount;
-    } else {
-      asset.current_cost = Number(asset.current_cost) + oldAmount;
-    }
-
-    if (amount !== undefined) transaction.amount = Number(amount);
-    if (transaction_type !== undefined) transaction.transaction_type = transaction_type;
-    if (description !== undefined) transaction.description = description;
-
-  const updatedAmount = Number(transaction.amount);
-    if (transaction.transaction_type === TransactionType.deposit) {
-      asset.current_cost = Number(asset.current_cost) + updatedAmount;
-    } else {
-      asset.current_cost = Number(asset.current_cost) - updatedAmount;
-    }
-    if (Number(asset.current_cost) < 0) {
-      await queryRunner.rollbackTransaction();
-      return res.status(400).json({ 
-        message: "Not enough balance",
-        current_balance_before_update: oldAmount 
+    const result = await queryRunnerFunc(async (manager) => {
+      
+      const transaction = await manager.findOne(Transaction, {
+        where: { id: transactionId, user: { id: authUserId } },
+        relations: ["asset"],
       });
-    }
 
-    await queryRunner.manager.save(asset);
-    await queryRunner.manager.save(transaction);
+      if (!transaction || !transaction.asset) {
+        throw { status: 404, message: "Transaction or Asset not found." };
+      }
 
-    await queryRunner.commitTransaction();
+      const asset = transaction.asset;
+      const oldAmount = Number(transaction.amount);
+      const oldType = transaction.transaction_type;
+      if (oldType === TransactionType.deposit) {
+        asset.current_cost = Number(asset.current_cost) - oldAmount;
+      } else {
+        asset.current_cost = Number(asset.current_cost) + oldAmount;
+      }
+      if (amount !== undefined) transaction.amount = Number(amount);
+      if (transaction_type !== undefined) transaction.transaction_type = transaction_type;
+      if (description !== undefined) transaction.description = description;
+
+      const updatedAmount = Number(transaction.amount);
+      if (transaction.transaction_type === TransactionType.deposit) {
+        asset.current_cost = Number(asset.current_cost) + updatedAmount;
+      } else {
+        asset.current_cost = Number(asset.current_cost) - updatedAmount;
+      }
+      if (Number(asset.current_cost) < 0) {
+        throw { 
+          status: 400, 
+          message: "Not enough balance for this update.",
+          current_balance_before_update: oldAmount 
+        };
+      }
+      await manager.save([asset, transaction]);
+
+      return {
+        new_balance: asset.current_cost,
+        transaction
+      };
+    });
 
     return res.status(200).json({
       message: "Transaction updated and balance recalculated.",
-      new_balance: asset.current_cost,
-      transaction
+      ...result
     });
 
-  } catch (err) {
-    await queryRunner.rollbackTransaction();
-    console.error("Error in updating transaction:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
-  } finally {
-    await queryRunner.release();
+  } catch (err: any) {
+    const statusCode = err.status || 500;
+    const message = err.message || "Internal Server Error";
+    
+    console.error("Update Transaction Error:", err);
+    return res.status(statusCode).json({ message, ...err });
   }
 };
+
+
 const get_transaction = async (req: AuthRequest, res: Response) => {
   const transactionId = Number(req.params.transactionId || req.params.id);
     const authUserId = req.authenticatedUserId; 
@@ -286,9 +272,7 @@ const get_all_transactions = async (
 
 
 
-const delete_transaction = async (
-  req: AuthRequest, res: Response
-) => {
+const delete_transaction = async (req: AuthRequest, res: Response) => {
   const transactionId = Number(req.params.id || req.params.transactionId);
   const authUserId = req.authenticatedUserId;
 
@@ -296,52 +280,50 @@ const delete_transaction = async (
     return res.status(400).json({ message: "Invalid transaction ID format." });
   }
 
-  const queryRunner = AppDataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
   try {
-    const transaction = await queryRunner.manager.findOne(Transaction, {
-      where: { id: transactionId, user: { id: authUserId } },
-      relations: ["asset"],
-    });
-
-    if (!transaction || !transaction.asset) {
-      await queryRunner.rollbackTransaction();
-      return res.status(404).json({ message: "Transaction not found or unauthorized." });
-    }
-
-    const asset = transaction.asset;
-    const amountToReverse = Number(transaction.amount);
-    if (transaction.transaction_type === TransactionType.deposit) {
-      asset.current_cost = Number(asset.current_cost) - amountToReverse;
-    } else if (transaction.transaction_type === TransactionType.withdrawal) {
-      asset.current_cost = Number(asset.current_cost) + amountToReverse;
-    }
-    if (asset.current_cost < 0) {
-      await queryRunner.rollbackTransaction();
-      return res.status(400).json({ 
-        message: "Can't delete this transaction because it would become a negative value." 
+    const result = await queryRunnerFunc(async (manager) => {
+      const transaction = await manager.findOne(Transaction, {
+        where: { id: transactionId, user: { id: authUserId } },
+        relations: ["asset"],
       });
-    }
-    await queryRunner.manager.save(asset);
-    await queryRunner.manager.remove(transaction);
 
-    await queryRunner.commitTransaction();
+      if (!transaction || !transaction.asset) {
+        throw { status: 404, message: "Transaction not found or unauthorized." };
+      }
 
+      const asset = transaction.asset;
+      const amountToReverse = Number(transaction.amount);
+
+      if (transaction.transaction_type === TransactionType.deposit) {
+        asset.current_cost = Number(asset.current_cost) - amountToReverse;
+      } else if (transaction.transaction_type === TransactionType.withdrawal) {
+        asset.current_cost = Number(asset.current_cost) + amountToReverse;
+      }
+
+      if (asset.current_cost < 0) {
+        throw { 
+          status: 400, 
+          message: "Can't delete this transaction because it would result in a negative balance." 
+        };
+      }
+
+      await manager.save(asset);
+      await manager.remove(transaction);
+      return asset.current_cost;
+    });
     return res.status(200).json({
       success: true,
       message: "Transaction deleted and asset balance restored.",
-      updated_asset_cost: asset.current_cost,
+      updated_asset_cost: result,
     });
 
-  } catch (err) {
-    await queryRunner.rollbackTransaction();
-    console.error(" Error in deleting transaction:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
-  } finally {
-    await queryRunner.release();
-  }
+  } catch (err: any) {
+    const statusCode = err.status || 500;
+    const message = err.message || "Internal Server Error";
+    
+    console.error("Error in deleting transaction:", err);
+    return res.status(statusCode).json({ message });
+  } 
 };
 export {
   create_transaction,

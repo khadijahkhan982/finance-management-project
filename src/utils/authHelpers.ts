@@ -11,6 +11,9 @@ export async function encrypt_password(password: string): Promise<string> {
 export function generateSixDigitCode(emailObject: any): string {
   return jwt.sign(emailObject, process.env.JWT_SECRET!, { expiresIn: '10m' }).toString();
 }
+export function generateAuthToken(payload: { userId: number }): string {
+  return jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: '24h' });
+}
 
 export function decrypt_Token(code: string): any {
   return jwt.verify(code, process.env.JWT_SECRET!);

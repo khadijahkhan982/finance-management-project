@@ -2,6 +2,7 @@ import { User } from "../entities/User";
 import { Asset } from "../entities/Asset";
 import { AppDataSource } from "../index";
 import { Request, Response} from "express";
+import { queryRunnerFunc } from "../utils/query_runner";
 
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
@@ -16,31 +17,26 @@ interface AuthRequest extends Request {
   if (!name || og_cost === undefined) {
     return res.status(400).json({ message: "Name and original cost are required." });
   }
+
   const authUserId = req.authenticatedUserId; 
 
-  const queryRunner = AppDataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
   try {
-   
-    const user = await queryRunner.manager.findOneBy(User, { id: authUserId });
+    const user = await User.findOneBy({ id: authUserId });
 
     if (!user) {
-      await queryRunner.rollbackTransaction();
       return res.status(404).json({ message: "Authenticated user not found." });
     }
-    const asset = queryRunner.manager.create(Asset, {
+    const asset = Asset.create({
       name,
       original_cost: Number(og_cost),
       current_cost: Number(og_cost),
       user: user, 
     });
 
-    await queryRunner.manager.save(asset);
-    await queryRunner.commitTransaction();
+    await asset.save();
 
     return res.status(201).json({
+      success: true,
       message: "Asset created successfully",
       asset: {
         id: asset.id,
@@ -50,11 +46,8 @@ interface AuthRequest extends Request {
     });
 
   } catch (error) {
-    await queryRunner.rollbackTransaction();
     console.error("Error in create_asset:", error);
     return res.status(500).json({ message: "Internal Server Error" });
-  } finally {
-    await queryRunner.release();
   }
 };
 
@@ -68,70 +61,51 @@ const update_asset = async (req: AuthRequest, res: Response) => {
   }
 
   if (!name) {
-    return res.status(400).json({ message: "Asset name is required for update." });
+    return res.status(400).json({ message: "Asset name is required." });
   }
-
-  const queryRunner = AppDataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
   try {
-  
-    const updateResult = await queryRunner.manager
-      .createQueryBuilder()
-      .update(Asset)
-      .set({ name: name })
-      .where("id = :id AND user_id = :user_id", { 
-        id: assetId, 
-        user_id: authUserId 
-      })
-      .execute();
-    if (updateResult.affected === 0) {
-      await queryRunner.rollbackTransaction();
+    const asset = await Asset.findOneBy({ 
+      id: assetId, 
+      user: { id: authUserId } 
+    });
+
+    if (!asset) {
       return res.status(404).json({ 
-        message: "Asset not found or you do not have permission to edit it." 
+        message: "Asset not found or unauthorized." 
       });
     }
-    await queryRunner.commitTransaction();
+    asset.name = name;
+    await asset.save();
 
     return res.status(200).json({
       message: "Asset updated successfully",
-      assetId
+      asset
     });
 
   } catch (error) {
-    await queryRunner.rollbackTransaction();
     console.error("Error in update_asset:", error);
     return res.status(500).json({ message: "Internal Server Error" });
-
-  } finally {
-    await queryRunner.release();
   }
 };
 const get_asset = async (req: AuthRequest, res: Response) => {
   const assetId = Number(req.params.assetId);
-    const authUserId = req.authenticatedUserId; 
+  const authUserId = req.authenticatedUserId; 
   if (isNaN(assetId)) {
     return res.status(400).send({ message: "Invalid asset ID" });
   }
+
   try {
-    const asset = await Asset.getRepository()
-      .createQueryBuilder("asset")
-      .where("asset.id = :id AND asset.user_id = :user_id", { 
+    const asset = await Asset.findOne({
+      where: { 
         id: assetId, 
-        user_id: authUserId 
-      })
-      .select([
-        "asset.id",
-        "asset.name",
-        "asset.original_cost",
-        "asset.current_cost",
-        "asset.created_at"
-      ])
-      .getOne();
+        user: { id: authUserId } 
+      },
+      select: ["id", "name", "original_cost", "current_cost", "created_at"]
+    });
+
     if (!asset) {
       return res.status(404).json({ 
-        message: "Asset not found or you do not have permission to view it." 
+        message: "Asset not found or unauthorized." 
       });
     }
 
@@ -168,8 +142,7 @@ const get_all_assets = async (req: AuthRequest, res: Response) => {
     } else if (og_min) {
       query.andWhere("asset.current_cost >= :min", { min: Number(og_min) });
     }
-    query
-      .select([
+    query.select([
         "asset.id",
         "asset.name",
         "asset.original_cost",
@@ -207,38 +180,30 @@ const delete_asset = async (req: AuthRequest, res: Response) => {
     return res.status(400).send({ message: "Invalid asset ID" });
   }
 
-  const queryRunner = AppDataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
   try {
-    const deleteResult = await queryRunner.manager
-      .createQueryBuilder()
-      .delete()
-      .from(Asset)
-      .where("id = :id AND user = :user_id", { 
-        id: assetId, 
-        user_id: authUserId 
-      })
-      .execute();
+    
+    const asset = await Asset.findOneBy({ 
+      id: assetId, 
+      user: { id: authUserId } 
+    });
 
-    if (deleteResult.affected === 0) {
-      await queryRunner.rollbackTransaction();
+    if (!asset) {
       return res.status(404).json({ 
-        message: "Asset not found or you do not have permission to delete it." 
+        message: "Asset not found or unauthorized." 
       });
     }
-  await queryRunner.commitTransaction();
+    await asset.remove();
 
     return res.status(200).json({
+      success: true,
       message: "Asset deleted successfully."
     });
+
   } catch (error) {
-    await queryRunner.rollbackTransaction();
     console.error("Error in deleting asset:", error);
-    return res.status(500).send({ message: "Internal Server Error" });
-  } finally {
-    await queryRunner.release();
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
+
 export { create_asset, update_asset, get_asset, get_all_assets, delete_asset };

@@ -24,6 +24,7 @@
     "winston3-logstash-transport": "^1.2.3"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/winston": "^2.4.4"
   }

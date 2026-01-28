@@ -69,6 +69,8 @@ import userRouter from './routes/user';
 import categoryRouter from './routes/category';
 import assetRouter from './routes/asset';
 import transactionRouter from './routes/transaction';
+import { Address } from './entities/Address';
+import { UserSessions } from './entities/UserSessions';
 
 
 dotenv.config(); 
@@ -83,7 +85,7 @@ export const AppDataSource = new DataSource({
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [User, Transaction, Asset, Category],
+    entities: [User, Transaction, Asset, Category, Address, UserSessions],
     synchronize: true,
     logging: process.env.NODE_ENV === 'development',
 });

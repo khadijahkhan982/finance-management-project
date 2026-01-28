@@ -1,34 +1,34 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express"; 
 import { User } from "../entities/User"; 
 import { verifyAndDecodeJWT } from "../utils/authHelpers"; 
 
-export const protect = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    let authenticatedUser: User | null = null;
+export const protect = async (req: any, res: any, next: any) => {
+  try {
     const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+
+    if (!token) return res.status(401).json({ message: "No token provided." });
+
+    const decoded = verifyAndDecodeJWT(token);
     
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res.status(401).send({ message: "No authentication token provided." });
-    }
-    const token = authHeader.split(" ")[1];
-
-    try {
-        const decodedPayload = verifyAndDecodeJWT(token);
-        
-        authenticatedUser = await User.getRepository().findOneBy({
-            email: decodedPayload.emailId,
-        });
-
-    } catch (e) {
-        return res.status(401).send({ message: (e as Error).message || "Invalid or expired access token." });
+    if (!decoded || !decoded.userId) {
+      console.log("DECODED ID: undefined - Blocking request");
+      return res.status(401).json({ message: "Invalid token payload: userId missing." });
     }
 
-    if (!authenticatedUser) {
-        return res.status(401).send({ message: "Authentication failure: User not found." });
+    const userId = Number(decoded.userId);
+    if (isNaN(userId)) {
+      return res.status(401).json({ message: "Invalid User ID format in token." });
+    }
+    const user = await User.findOneBy({ id: userId, token: token });
+
+    if (!user) {
+      return res.status(401).json({ message: "User not found or session replaced." });
     }
 
-  
-    (req as any).authenticatedUserId = Number(authenticatedUser.id);
-    (req as any).authenticatedUserEmail = authenticatedUser.email;
-
-    return next(); 
+    req.authenticatedUserId = user.id; 
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: "Invalid or expired token." });
+  }
 };
