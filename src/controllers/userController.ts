@@ -182,6 +182,7 @@ const user_login = async (req: Request, res: Response) => {
     expiry.setHours(expiry.getHours() + 24);
     user.token = authToken;
     user.token_expires_at = expiry;
+    user.status = Status.is_active;
     await user.save();
     const session = UserSessions.create({
       token: authToken,
