@@ -12,7 +12,7 @@ import { Request, Response } from "express";
 import { queryRunnerFunc } from "../utils/query_runner";
 import { Address } from "../entities/Address";
 import { UserSessions } from "../entities/UserSessions";
-import redisClient from "../utils/redis";
+import redisClient from "../config/redis";
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
 }

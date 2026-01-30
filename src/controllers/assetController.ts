@@ -1,8 +1,7 @@
-import { User } from "../entities/User";
 import { Asset } from "../entities/Asset";
-import { AppDataSource } from "../index";
 import { Request, Response} from "express";
-import { queryRunnerFunc } from "../utils/query_runner";
+import { User } from "../entities/User";
+
 
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
