@@ -1,11 +1,9 @@
-
 import { Transaction } from "../entities/Transaction";
 import { User } from "../entities/User";
 import { Category } from "../entities/Category";
 import { Asset } from "../entities/Asset";
 import { TransactionType } from "../utils/enums";
 import { Request, Response} from "express";
-import { AppDataSource } from "../index";
 import { queryRunnerFunc } from "../utils/query_runner";
 
 interface AuthRequest extends Request {
