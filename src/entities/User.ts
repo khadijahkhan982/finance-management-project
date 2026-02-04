@@ -44,7 +44,7 @@ export class User extends BaseEntity {
     @UpdateDateColumn({ type: "timestamp", default: () => "CURRENT_TIMESTAMP(6)", onUpdate: "CURRENT_TIMESTAMP(6)" })
     updated_at: Date; 
 
-@OneToOne(() => Address, (address) => address.user, { cascade: true, eager: true })
+@OneToOne(() => Address, (address) => address.user, { cascade: true, eager: true, onDelete: 'CASCADE' })
 @JoinColumn({ name: "address_id" })
 address: Address;
 

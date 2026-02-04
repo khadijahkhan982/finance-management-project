@@ -1,6 +1,5 @@
 import express, {Request, Response, NextFunction} from "express";
 import { Category } from "../entities/Category";
-import { AppDataSource } from "../index";
 
 const create_category = async (req: Request, res: Response, next: NextFunction) => {
   const { name, type } = req.body;

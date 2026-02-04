@@ -21,7 +21,8 @@
     "typeorm": "^0.3.26",
     "typescript": "^5.9.2",
     "winston": "^3.19.0",
-    "winston3-logstash-transport": "^1.2.3"
+    "winston3-logstash-transport": "^1.2.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

@@ -5,30 +5,29 @@ import { verifyAndDecodeJWT } from "../utils/authHelpers";
 export const protect = async (req: any, res: any, next: any) => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+    const token = authHeader?.split(" ")[1];
 
     if (!token) return res.status(401).json({ message: "No token provided." });
 
     const decoded = verifyAndDecodeJWT(token);
-    
-    if (!decoded || !decoded.userId) {
-      console.log("DECODED ID: undefined - Blocking request");
-      return res.status(401).json({ message: "Invalid token payload: userId missing." });
-    }
+    if (!decoded?.userId) return res.status(401).json({ message: "Invalid Token" });
 
     const userId = Number(decoded.userId);
-    if (isNaN(userId)) {
-      return res.status(401).json({ message: "Invalid User ID format in token." });
-    }
+
+    // Verify user exists and token matches (for active session tracking)
     const user = await User.findOneBy({ id: userId, token: token });
 
     if (!user) {
-      return res.status(401).json({ message: "User not found or session replaced." });
+      console.log(`[PROTECT] Fail: User ${userId} not found or token mismatch.`);
+      return res.status(401).json({ message: "Please login again." });
     }
 
-    req.authenticatedUserId = user.id; 
+    // Attach as Number
+    req.authenticatedUserId = Number(user.id);
+    console.log(`[PROTECT] Success: Attached ID ${req.authenticatedUserId}`);
+    
     next();
   } catch (error) {
-    return res.status(401).json({ message: "Invalid or expired token." });
+    return res.status(401).json({ message: "Session expired." });
   }
 };

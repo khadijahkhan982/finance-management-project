@@ -1,4 +1,4 @@
-import { AppDataSource } from "../index";
+import { AppDataSource } from "../config/db";
 import { EntityManager } from "typeorm";
  
 export async function queryRunnerFunc<T>(

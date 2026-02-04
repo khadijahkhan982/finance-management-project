@@ -4,7 +4,6 @@ import bcrypt from "bcrypt";
 import {
   encrypt_password,
   generateSixDigitCode,
-  decrypt_Token,
   generateAuthToken,
   verifyAndDecodeJWT,
 } from "../utils/authHelpers";
@@ -20,162 +19,100 @@ interface AuthRequest extends Request {
 const signup = async (req: any, res: any, next: any) => {
   try {
     const {
-      full_name,
+      // full_name,
       email,
       password,
-      phone_number,
-      date_of_birth,
-      city,
-      country,
-      street,
-      house_number,
+      // phone_number,
+      // date_of_birth,
+      // city,
+      // country,
+      // street,
+      // house_number,
     } = req.body;
     
-    const [existingUser, encrypted_password] = await Promise.all([
-    User.findOneBy({ email }),
-    encrypt_password(password)
-  ]);
+    const existingUser = await User.findOneBy({ email });
+  
     if (existingUser) {
       return res.status(400).send({ message: "User already exists." });
     }
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const encrypted_password = await encrypt_password(password);
+const pendingUserData = {
+      ...req.body,
+      password: encrypted_password,
+      otp 
+    };
+      await redisClient.set(
+      `temp_user:${email}`, 
+      JSON.stringify(pendingUserData), 
+      {EX: 600}
+    );
 
-    const verificationToken = generateSixDigitCode({ emailId: email });
-    const tokenExpiresAt = new Date();
-    tokenExpiresAt.setMinutes(tokenExpiresAt.getMinutes() + 10);
+      return res.status(200).send({
+      message: "OTP generated and stored in Redis. Please verify.",
+      otp: otp, 
+      email: email
+    });
+    
+  } catch (error: any) {
+    console.error("Signup Error:", error);
+    return res
+      .status(500)
+      .send({ message: error.message || "Error creating user." });
+  }
+};
 
+
+const verifySignup = async (req: any, res: any) => {
+  try {
+    const { email, otp } = req.body;
+    const cachedData = await redisClient.get(`temp_user:${email}`);
+    if (!cachedData) return res.status(400).send({ message: "Expired otp" });
+
+    const userData = JSON.parse(cachedData);
+
+    if (userData.otp !== otp) return res.status(400).send({ message: "Invalid OTP" });
     const newUser = await queryRunnerFunc(async (manager) => {
       const address = manager.create(Address, {
-        city,
-        country,
-        street,
-        house_number,
+        city: userData.city,          
+        country: userData.country,
+        street: userData.street,       
+        house_number: userData.house_number,
       });
+      const savedAddress = await manager.save(Address, address);
 
       const user = manager.create(User, {
-        full_name,
-        email,
-        password: encrypted_password,
-        phone_number,
-        token: verificationToken,
-        token_expires_at: tokenExpiresAt,
-        date_of_birth,
-        status: Status.is_active,
-        address: address,
+        full_name: userData.full_name,
+        email: userData.email,
+        password: userData.password,
+        phone_number: userData.phone_number,
+        date_of_birth: userData.date_of_birth,
+        status: Status.is_inactive,
+        address: savedAddress, 
       });
 
       return await manager.save(User, user);
     });
 
-    //console.log(`Verification token sent for ${email}`);
-    res.locals.user = newUser;
-    return next();
-  } catch (error: any) {
-    console.error("Signup Error:", error);
-    const status = error.status || 500;
-    return res
-      .status(status)
-      .send({ message: error.message || "Error creating user." });
+    await redisClient.del(`temp_user:${email}`);
+    return res.status(201).send(newUser);
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send("Verification failed");
   }
 };
 
-const user_auth = async (req: any, res: any) => {
-  const { email } = req.body;
-  const authHeader = req.headers.authorization;
-  const sentToken = authHeader?.startsWith("Bearer ")
-    ? authHeader.split(" ")[1]
-    : null;
-  if (!email || !sentToken) {
-    return res.status(400).send({ message: "Email and token are required" });
-  }
-  try {
-    const user = await User.findOne({
-      where: { email },
-      select: ["id", "token", "token_expires_at", "status"],
-    });
 
-    if (!user) {
-      return res.status(404).send({ message: "User not found." });
-    }
-    try {
-      decrypt_Token(sentToken);
-    } catch (e) {
-      return res
-        .status(400)
-        .send({ message: "Invalid JWT signature or format." });
-    }
-    const storedToken = user.token?.trim();
-    if (!storedToken || storedToken !== sentToken.trim()) {
-      return res
-        .status(400)
-        .send({ message: "Invalid or already used token." });
-    }
 
-    if (user.token_expires_at && new Date(user.token_expires_at) < new Date()) {
-      return res.status(400).send({ message: "Token expired." });
-    }
-    const authToken = generateAuthToken({ userId: user.id });
-    const expiry = new Date();
-    expiry.setHours(expiry.getHours() + 24);
-
-    user.status = Status.is_active;
-    user.token = authToken;
-    user.token_expires_at = expiry;
-
-    await user.save();
-
-    return res.send({
-      message: "User verified successfully. You can now log in.",
-    });
-  } catch (err) {
-    console.error("Verification Error:", err);
-    return res.status(500).send({ message: "Verification failed." });
-  }
-};
-
-// const user_login = async (req: Request, res: Response) => {
-//   const { email, password } = req.body;
-
-//   try {
-//     const user = await User.findOneBy({ email });
-//     if (!user || !(await bcrypt.compare(password, user.password))) {
-//       return res.status(401).json({ message: "Invalid email or password." });
-//     }
-
-//     if (user.status !== Status.is_active) {
-//       return res.status(403).json({ message: "Please verify your email first." });
-//     }
-
-//     const authToken = generateAuthToken({ userId: user.id });
-
-//     const expiry = new Date();
-//     expiry.setHours(expiry.getHours() + 24);
-
-//     const session = UserSessions.create({
-//       token: authToken,
-//       user: user,
-//       expires_at: expiry,
-//       is_valid: true
-//     });
-//     await session.save();
-
-//     return res.status(200).json({
-//       success: true,
-//       token: authToken,
-//       user: { id: user.id, full_name: user.full_name }
-//     });
-//   } catch (error) {
-//     return res.status(500).json({ message: "Internal Server Error" });
-//   }
-// };
 const user_login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
-
   try {
     const user = await User.findOneBy({ email });
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ message: "Invalid email or password." });
     }
-
+user.status = Status.is_active;
     const authToken = generateAuthToken({ userId: user.id });
 
     const expiry = new Date();
@@ -202,64 +139,13 @@ const user_login = async (req: Request, res: Response) => {
   }
 };
 
-// const user_logout = async (req: AuthRequest, res: Response) => {
-//   console.log("DEBUG:", {
-//     paramId: req.params.userId,
-//     authenticatedId: req.authenticatedUserId
-//   });
 
-//   const targetUserId = Number(req.params.userId);
-//   const authUserId = Number(req.authenticatedUserId);
-//   if (isNaN(targetUserId) || targetUserId !== authUserId) {
-//     return res.status(403).json({
-//       message: "Forbidden. You can only log out your own session."
-//     });
-//   }
-//   const authHeader = req.headers.authorization;
-//   const currentToken = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
-
-//   if (!currentToken) {
-//     return res.status(400).json({ message: "No active session token found." });
-//   }
-
-//   try {
-
-//     const session = await UserSessions.findOneBy({
-//       token: currentToken,
-//       user: { id: authUserId },
-//       is_valid: true
-//     });
-
-//     if (!session) {
-//       return res.status(404).json({ message: "Session already expired or not found." });
-//     }
-//     session.is_valid = false;
-//     await session.save();
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "Successfully logged out. Session invalidated."
-//     });
-
-//   } catch (error) {
-//     console.error("Logout Error:", error);
-//     return res.status(500).json({ message: "Internal Server Error during logout." });
-//   }
-// };
 const user_logout = async (req: AuthRequest, res: Response) => {
-  const targetUserId = Number(req.params.userId);
-  const authUserId = Number(req.authenticatedUserId);
-  if (isNaN(targetUserId) || targetUserId !== authUserId) {
-    return res
-      .status(403)
-      .json({ message: "Forbidden. You can only log out your own session." });
-  }
-
+const authUserId = req.authenticatedUserId;
   const authHeader = req.headers.authorization;
   const currentToken = authHeader?.startsWith("Bearer ")
     ? authHeader.split(" ")[1]
     : null;
-
   try {
     await User.update(
       { id: authUserId },
@@ -288,17 +174,8 @@ const user_logout = async (req: AuthRequest, res: Response) => {
 };
 
 const get_user = async (req: AuthRequest, res: any) => {
-  const targetUserId = Number(req.params.userId);
-  const authUserId = Number(req.authenticatedUserId);
-  console.log("DEBUG ACCESS:", {
-    urlParamId: targetUserId,
-    idFromMiddleware: authUserId,
-    match: targetUserId === authUserId,
-  });
-  if (!targetUserId || targetUserId !== authUserId) {
-    return res.status(403).json({ message: "Access denied." });
-  }
-
+  
+const userId = req.authenticatedUserId;
   try {
     const user = await User.getRepository()
       .createQueryBuilder("user")
@@ -320,7 +197,7 @@ const get_user = async (req: AuthRequest, res: any) => {
         "address.street",
         "address.house_number",
       ])
-      .where("user.id = :id", { id: targetUserId })
+      .where("user.id = :id", { id: userId })
       .getOne();
 
     if (!user) {
@@ -347,7 +224,11 @@ const resend_token = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
-
+if (user.status === Status.is_inactive) {
+      return res.status(401).json({ 
+        message: "Your session has expired or you are logged out. Please login again to receive a new token." 
+      });
+    }
     const newVerificationToken = generateSixDigitCode({
       emailId: email,
       userId: user.id,
@@ -358,9 +239,6 @@ const resend_token = async (req: Request, res: Response) => {
     user.token_expires_at = newTokenExpiresAt;
     await user.save();
 
-    console.log(
-      `[DATABASE UPDATED] New token for ${email}: ${newVerificationToken}`,
-    );
     return res.status(200).json({
       success: true,
       message: "New verification token generated and updated in your account.",
@@ -373,29 +251,8 @@ const resend_token = async (req: Request, res: Response) => {
 };
 
 const update_user = async (req: AuthRequest, res: any) => {
-  const targetUserId = Number(req.params.userId);
-  const authUserId = Number(req.authenticatedUserId);
-  console.log("UPDATE DEBUG:", {
-    urlId: targetUserId,
-    tokenId: authUserId,
-    types: { url: typeof targetUserId, token: typeof authUserId },
-  });
-  if (!targetUserId || targetUserId !== authUserId) {
-    return res
-      .status(400)
-      .send({ message: "Unauthorized or invalid User ID." });
-  }
-
-  const {
-    full_name,
-    phone_number,
-    date_of_birth,
-    password,
-    city,
-    country,
-    street,
-    house_number,
-  } = req.body;
+  const targetUserId = req.authenticatedUserId;
+  const { password, date_of_birth, ...otherData } = req.body;
 
   try {
     const result = await queryRunnerFunc(async (manager) => {
@@ -404,35 +261,31 @@ const update_user = async (req: AuthRequest, res: any) => {
         relations: ["address"],
       });
 
-      if (!user)
-        throw {
-          status: 404,
-          message: "User not found.",
-        };
-      if (full_name) user.full_name = full_name;
-      if (phone_number) user.phone_number = phone_number;
-      if (date_of_birth) user.date_of_birth = new Date(date_of_birth);
-      if (password) user.password = await encrypt_password(password);
+      if (!user) throw { status: 404, message: "User not found." };
+
+      Object.assign(user, otherData);
+
       if (user.address) {
-        if (city) user.address.city = city;
-        if (country) user.address.country = country;
-        if (street) user.address.street = street;
-        if (house_number) user.address.house_number = house_number;
+        Object.assign(user.address, otherData);
       }
+      if (date_of_birth) {
+        user.date_of_birth = new Date(date_of_birth);
+      }
+
+      if (password) {
+        user.password = await encrypt_password(password);
+      }
+
       return await manager.save(User, user);
     });
 
-    return res
-      .status(200)
-      .json({
-        message: "Profile and address updated successfully.",
-        user: result,
-      });
+    return res.status(200).json({
+      message: "Profile and address updated successfully.",
+      user: result,
+    });
   } catch (err: any) {
-    console.error(err);
-    return res
-      .status(err.status || 500)
-      .json({ message: err.message || "Update failed." });
+    console.error("Update Error:", err);
+    return res.status(err.status || 500).json({ message: err.message || "Update failed." });
   }
 };
 
@@ -531,29 +384,25 @@ const reset_password = async (req: Request, res: Response) => {
   }
 };
 
-const delete_user = async (req: AuthRequest, res: any) => {
+const delete_user = async (req: any, res: any) => {
   const targetUserId = Number(req.params.userId);
-  const authUserId = Number(req.authenticatedUserId);
-
-  if (targetUserId !== authUserId) {
-    return res.status(403).send({ message: "Forbidden." });
-  }
 
   try {
     await queryRunnerFunc(async (manager) => {
       const user = await manager.findOne(User, {
         where: { id: targetUserId },
-        select: ["address"] 
+        relations: ["address"] 
       });
 
       if (!user) throw { status: 404, message: "User not found." };
+      
       const addressId = user.address?.id;
 
-  
       await manager.delete("Transaction", { user: { id: targetUserId } });
       await manager.delete("Asset", { user: { id: targetUserId } });
       await manager.delete("UserSessions", { user: { id: targetUserId } });
-            await manager.delete(User, { id: targetUserId });
+      await manager.delete(User, { id: targetUserId });
+      
       if (addressId) {
         await manager.delete(Address, { id: addressId });
       }
@@ -566,7 +415,7 @@ const delete_user = async (req: AuthRequest, res: any) => {
 };
 export {
   signup,
-  user_auth,
+  verifySignup,
   user_logout,
   get_user,
   delete_user,

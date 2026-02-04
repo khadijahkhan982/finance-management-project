@@ -51,32 +51,25 @@ interface AuthRequest extends Request {
 };
 
 const update_asset = async (req: AuthRequest, res: Response) => {
-  const assetId = Number(req.params.assetId);
-  const { name } = req.body;
+  const { id, name } = req.body;
   const authUserId = req.authenticatedUserId; 
 
-  if (isNaN(assetId)) {
-    return res.status(400).json({ message: "Invalid asset ID" });
-  }
-
-  if (!name) {
-    return res.status(400).json({ message: "Asset name is required." });
-  }
   try {
     const asset = await Asset.findOneBy({ 
-      id: assetId, 
+      id: Number(id), 
       user: { id: authUserId } 
     });
 
     if (!asset) {
       return res.status(404).json({ 
-        message: "Asset not found or unauthorized." 
+        message: "Asset not found or you don't have permission to edit it." 
       });
     }
     asset.name = name;
     await asset.save();
 
     return res.status(200).json({
+      success: true,
       message: "Asset updated successfully",
       asset
     });
