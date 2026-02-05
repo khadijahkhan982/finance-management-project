@@ -12,6 +12,7 @@ import { queryRunnerFunc } from "../utils/query_runner";
 import { Address } from "../entities/Address";
 import { UserSessions } from "../entities/UserSessions";
 import redisClient from "../config/redis";
+import { sendOTPEmail, sendOTPForPasswordReset } from "../utils/emailHelper";
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
 }
@@ -47,10 +48,16 @@ const pendingUserData = {
       JSON.stringify(pendingUserData), 
       {EX: 600}
     );
+    try {
+      await sendOTPEmail(email, otp);
+    } catch (mailError) {
+      console.error("Mail Delivery Failed:", mailError);
+      return res.status(500).send({ message: "Failed to send verification email." });
+    }
 
       return res.status(200).send({
       message: "OTP generated and stored in Redis. Please verify.",
-      otp: otp, 
+      // otp: otp, 
       email: email
     });
     
@@ -305,12 +312,19 @@ const forgot_password = async (req: Request, res: Response) => {
     }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await redisClient.set(`reset_otp:${email}`, otp, { EX: 300 });
-    console.log(`[REDIS] OTP for ${email}: ${otp}`);
+    // console.log(`[REDIS] OTP for ${email}: ${otp}`);
+
+   try {
+      await sendOTPForPasswordReset(email, otp);
+    } catch (mailError) {
+      console.error("Mail Delivery Failed:", mailError);
+      return res.status(500).send({ message: "Failed to send verification email." });
+    }
 
     return res.status(200).json({
       success: true,
       message: "OTP sent successfully to your email.",
-      otp: otp,
+      // otp: otp,
     });
   } catch (error) {
     console.error("Forgot Password Error:", error);
@@ -326,18 +340,21 @@ const verify_otp = async (req: Request, res: Response) => {
     if (!storedOtp || storedOtp !== otp) {
       return res.status(400).json({ message: "Invalid or expired OTP." });
     }
+
     const user = await User.findOneBy({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found." });
-    }
+    if (!user) return res.status(404).json({ message: "User not found." });
+
     await redisClient.del(`reset_otp:${email}`);
 
-    const resetToken = generateAuthToken({ userId: user.id });
+    // Instead of generating a new one, return the token assigned at login
+    // If the user isn't logged in, this might be null, so handle that:
+    if (!user.token) {
+      return res.status(401).json({ message: "No active session found. Please login first." });
+    }
 
     return res.status(200).json({
       success: true,
-      message: "OTP verified.",
-      resetToken: resetToken,
+      message: "OTP verified."
     });
   } catch (error) {
     console.error(error);
@@ -348,39 +365,41 @@ const verify_otp = async (req: Request, res: Response) => {
 const reset_password = async (req: Request, res: Response) => {
   const { newPassword } = req.body;
   const authHeader = req.headers.authorization;
-  const resetToken = authHeader?.startsWith("Bearer ")
-    ? authHeader.split(" ")[1]
-    : null;
+  const tokenFromHeader = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
 
-  if (!resetToken) {
-    return res
-      .status(401)
-      .json({
-        message: "Reset token is required in the Authorization header.",
-      });
+  if (!tokenFromHeader) {
+    return res.status(401).json({ message: "Token is required." });
   }
 
   try {
-    const decoded = verifyAndDecodeJWT(resetToken);
+    const decoded = verifyAndDecodeJWT(tokenFromHeader);
     const userIdFromToken = Number(decoded.userId);
 
     const user = await User.findOneBy({ id: userIdFromToken });
-    if (!user) {
-      return res.status(404).json({ message: "User not found." });
+    if (!user || user.token !== tokenFromHeader) {
+      return res.status(401).json({ message: "Invalid or mismatched session token." });
     }
 
+    // Update password
     user.password = await encrypt_password(newPassword);
+    
+    // Security: After a password reset, it's best to clear the token 
+    // and force a fresh login
+    user.token = null;
+    user.token_expires_at = null;
+    user.status = Status.is_inactive;
+    
     await user.save();
+    
+    // Invalidate all sessions in UserSessions table
     await UserSessions.update({ user: { id: user.id } }, { is_valid: false });
 
     return res.status(200).json({
       success: true,
-      message:
-        "Password reset successful. All previous sessions have been logged out.",
+      message: "Password reset successful. Please login with your new password.",
     });
   } catch (error) {
-    console.error("Reset Password Error:", error);
-    return res.status(401).json({ message: "Invalid or expired reset token." });
+    return res.status(401).json({ message: "Invalid session." });
   }
 };
 

@@ -28,8 +28,6 @@ export const validateOwnership = (req: any, res: Response, next: NextFunction) =
   const targetId = Number(req.params.userId);
   const authId = Number(req.authenticatedUserId);
 
-  console.log(`[OWNERSHIP] Target: ${targetId} | Auth: ${authId}`);
-
   if (!authId) {
     return res.status(500).json({ message: "Auth ID missing. Is 'protect' middleware applied?" });
   }
