@@ -2,9 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as dgram from 'dgram'; // Used for UDP/Logstash simulation
-
-// --- Environment Helpers ---
+import * as dgram from 'dgram'; 
 
 function isDevEnv(): boolean {
   return process.env.NODE_ENV === "development";
@@ -13,9 +11,6 @@ function isDevEnv(): boolean {
 export function isProdEnv(): boolean {
   return process.env.NODE_ENV === "production";
 }
-
-// --- Types and Custom Levels ---
-
 type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
 
 const customLevels = {
@@ -123,13 +118,11 @@ class Logger {
       fs.appendFileSync(this.logFilePath, output + '\n');
     }
 
-    // --- Logstash Transport (Runs only if configured and level is met) ---
     if (process.env.LOGGING_SERVER_IP && process.env.LOGGING_SERVER_PORT) {
         sendToLogstash(level, logTime, message, meta);
     }
   }
   
-  // --- Logging Methods ---
   
   log(level: LogLevel, msg: any, meta?: any) {
     this.handleLog(level, msg, meta);
@@ -160,8 +153,6 @@ class Logger {
   }
 }
 
-// --- Singleton Implementation ---
-
 class Singleton {
   private static instance: Logger;
   
@@ -176,5 +167,4 @@ class Singleton {
   }
 }
 
-// --- Export the Singleton Instance ---
 export const logger = new Singleton().getInstance();

@@ -112,9 +112,6 @@ const verifySignup = async (req: any, res: any) => {
     return res.status(500).send("Verification failed");
   }
 };
-
-
-
 const user_login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
@@ -379,7 +376,7 @@ const reset_password = async (req: Request, res: Response) => {
     if (!user || user.token !== tokenFromHeader) {
       return res.status(401).json({ message: "Invalid or mismatched session token." });
     }
-        user.password = await encrypt_password(newPassword);
+    user.password = await encrypt_password(newPassword);
     
  
     user.token = null;
