@@ -50,13 +50,16 @@ const pendingUserData = {
     );
     try {
       await sendOTPEmail(email, otp);
+    console.log(`[REDIS] OTP for ${email}: ${otp}`);
+
+
     } catch (mailError) {
       console.error("Mail Delivery Failed:", mailError);
       return res.status(500).send({ message: "Failed to send verification email." });
     }
 
       return res.status(200).send({
-      message: "OTP generated and stored in Redis. Please verify.",
+      message: "OTP generated and sent to your email. Please verify.",
       // otp: otp, 
       email: email
     });
@@ -312,7 +315,7 @@ const forgot_password = async (req: Request, res: Response) => {
     }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await redisClient.set(`reset_otp:${email}`, otp, { EX: 300 });
-    // console.log(`[REDIS] OTP for ${email}: ${otp}`);
+    console.log(`[REDIS] OTP for ${email}: ${otp}`);
 
    try {
       await sendOTPForPasswordReset(email, otp);
@@ -345,9 +348,6 @@ const verify_otp = async (req: Request, res: Response) => {
     if (!user) return res.status(404).json({ message: "User not found." });
 
     await redisClient.del(`reset_otp:${email}`);
-
-    // Instead of generating a new one, return the token assigned at login
-    // If the user isn't logged in, this might be null, so handle that:
     if (!user.token) {
       return res.status(401).json({ message: "No active session found. Please login first." });
     }
@@ -379,20 +379,15 @@ const reset_password = async (req: Request, res: Response) => {
     if (!user || user.token !== tokenFromHeader) {
       return res.status(401).json({ message: "Invalid or mismatched session token." });
     }
-
-    // Update password
-    user.password = await encrypt_password(newPassword);
+        user.password = await encrypt_password(newPassword);
     
-    // Security: After a password reset, it's best to clear the token 
-    // and force a fresh login
+ 
     user.token = null;
     user.token_expires_at = null;
     user.status = Status.is_inactive;
     
     await user.save();
-    
-    // Invalidate all sessions in UserSessions table
-    await UserSessions.update({ user: { id: user.id } }, { is_valid: false });
+      await UserSessions.update({ user: { id: user.id } }, { is_valid: false });
 
     return res.status(200).json({
       success: true,
