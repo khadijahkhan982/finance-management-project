@@ -1,7 +1,9 @@
 import { Asset } from "../entities/Asset";
 import { Request, Response} from "express";
 import { User } from "../entities/User";
-
+import { HttpStatusCode } from "../utils/enums";
+import { APIError } from "../errors/api-error";
+import { create_json_response, handleError } from "../utils/helper";
 
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
@@ -14,8 +16,13 @@ interface AuthRequest extends Request {
   const { name, og_cost } = req.body;
   
   if (!name || og_cost === undefined) {
-    return res.status(400).json({ message: "Name and original cost are required." });
-  }
+throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Name and og cost are required",
+        "Name and og cost are required"
+      );     }
 
   const authUserId = req.authenticatedUserId; 
 
@@ -23,8 +30,13 @@ interface AuthRequest extends Request {
     const user = await User.findOneBy({ id: authUserId });
 
     if (!user) {
-      return res.status(404).json({ message: "Authenticated user not found." });
-    }
+throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Authentication user not found",
+        "Authentication user not found"
+      );     }
     const asset = Asset.create({
       name,
       original_cost: Number(og_cost),
@@ -34,19 +46,18 @@ interface AuthRequest extends Request {
 
     await asset.save();
 
-    return res.status(201).json({
-      success: true,
-      message: "Asset created successfully",
-      asset: {
+    return res.status(HttpStatusCode.CREATED).json(
+      create_json_response({ asset: {
         id: asset.id,
         name: asset.name,
         current_cost: asset.current_cost,
-      },
-    });
+      }},
+       true,
+        "Asset created successfully"))
+  
 
-  } catch (error) {
-    console.error("Error in create_asset:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+  } catch (error: any) {
+    return handleError(error, res, "create asset")
   }
 };
 
@@ -61,30 +72,35 @@ const update_asset = async (req: AuthRequest, res: Response) => {
     });
 
     if (!asset) {
-      return res.status(404).json({ 
-        message: "Asset not found or you don't have permission to edit it." 
-      });
+     throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Asset not found",
+        "Asset not found"
+      ); 
     }
     asset.name = name;
     await asset.save();
 
-    return res.status(200).json({
-      success: true,
-      message: "Asset updated successfully",
-      asset
-    });
+    return res.status(HttpStatusCode.OK).json(
+      create_json_response({asset}, true, "Asset updated successfully"));
 
-  } catch (error) {
-    console.error("Error in update_asset:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+  } catch (error: any) {
+    return handleError(error, res, "update")
   }
 };
 const get_asset = async (req: AuthRequest, res: Response) => {
   const assetId = Number(req.params.assetId);
   const authUserId = req.authenticatedUserId; 
   if (isNaN(assetId)) {
-    return res.status(400).send({ message: "Invalid asset ID" });
-  }
+throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Asset id not valid",
+        "Asset id not valid"
+      );   }
 
   try {
     const asset = await Asset.findOne({
@@ -96,16 +112,21 @@ const get_asset = async (req: AuthRequest, res: Response) => {
     });
 
     if (!asset) {
-      return res.status(404).json({ 
-        message: "Asset not found or unauthorized." 
-      });
+       throw new APIError(
+        "Notfound",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Asset not found or unauthorized",
+        "Asset not found or unauthorized"
+      ); 
     }
 
-    return res.status(200).json({ asset });
+    return res.status(HttpStatusCode.OK).json(create_json_response({ asset },
+      true, "Asset retrieved successfully"
+    ));
 
-  } catch (error) {
-    console.error("Error in get_asset:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+  } catch (error: any) {
+   return handleError(error, res, "get asset")
   }
 };
 
@@ -146,21 +167,21 @@ const get_all_assets = async (req: AuthRequest, res: Response) => {
       .take(pageLimit);
 
     const [assets, total] = await query.getManyAndCount();
-    return res.status(200).json({
-      success: true,
-      meta: {
+    return res.status(HttpStatusCode.OK).json(create_json_response(
+      { assets, meta: {
         total_items: total,
         total_pages: Math.ceil(total / pageLimit),
         current_page: pageNum,
         per_page: pageLimit,
         item_count: assets.length
-      },
-      assets,
-    });
+      },},
+   true,
+      "All assets retrieved successfully"
+     )
+    );
 
-  } catch (error) {
-    console.error("Error in get_all_assets:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+  } catch (error: any) {
+   return handleError(error, res, "get all")
   }
 };
 
@@ -169,8 +190,13 @@ const delete_asset = async (req: AuthRequest, res: Response) => {
   const authUserId = req.authenticatedUserId;
 
   if (isNaN(assetId)) {
-    return res.status(400).send({ message: "Invalid asset ID" });
-  }
+throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Asset id not valid",
+        "Asset id not valid"
+      );   }
 
   try {
     
@@ -180,20 +206,22 @@ const delete_asset = async (req: AuthRequest, res: Response) => {
     });
 
     if (!asset) {
-      return res.status(404).json({ 
-        message: "Asset not found or unauthorized." 
-      });
+     throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Asset not found",
+        "Asset not found"
+      ); 
     }
     await asset.remove();
 
-    return res.status(200).json({
-      success: true,
-      message: "Asset deleted successfully."
-    });
+    return res.status(HttpStatusCode.OK).json(
+      create_json_response( {}, true, "Asset deleted successfully")
+    );
 
-  } catch (error) {
-    console.error("Error in deleting asset:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+  } catch (error: any) {
+  return handleError(error, res, "delete")
   }
 };
 

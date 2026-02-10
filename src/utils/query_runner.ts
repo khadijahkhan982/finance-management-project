@@ -4,10 +4,7 @@ import { EntityManager } from "typeorm";
 export async function queryRunnerFunc<T>(
   work: (manager: EntityManager) => Promise<T>
 ): Promise<T> {
-
- 
  const queryRunner = AppDataSource.createQueryRunner();
- 
   await queryRunner.connect();
   await queryRunner.startTransaction();
  

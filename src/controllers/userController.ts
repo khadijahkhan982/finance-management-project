@@ -1,5 +1,5 @@
 import { User } from "../entities/User";
-import { Status } from "../utils/enums";
+import { HttpStatusCode, Status } from "../utils/enums";
 import bcrypt from "bcrypt";
 import {
   encrypt_password,
@@ -13,6 +13,9 @@ import { Address } from "../entities/Address";
 import { UserSessions } from "../entities/UserSessions";
 import redisClient from "../config/redis";
 import { sendOTPEmail, sendOTPForPasswordReset } from "../utils/emailHelper";
+import { APIError } from "../errors/api-error";
+import { create_json_response, handleError } from "../utils/helper";
+import { UnauthenticatedError } from "../errors/unauthentication-error";
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
 }
@@ -30,63 +33,84 @@ const signup = async (req: any, res: any, next: any) => {
       // street,
       // house_number,
     } = req.body;
-    
+
     const existingUser = await User.findOneBy({ email });
-  
+
     if (existingUser) {
-      return res.status(400).send({ message: "User already exists." });
-    }
+throw new APIError(
+        "ConflictError",
+        HttpStatusCode.CONFLICT,
+        true,
+        "User with this email already exists",
+        "User with this email already exists"
+      );    }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const encrypted_password = await encrypt_password(password);
-const pendingUserData = {
+    const pendingUserData = {
       ...req.body,
       password: encrypted_password,
-      otp 
+      otp,
     };
-      await redisClient.set(
-      `temp_user:${email}`, 
-      JSON.stringify(pendingUserData), 
-      {EX: 600}
+    await redisClient.set(
+      `temp_user:${email}`,
+      JSON.stringify(pendingUserData),
+      { EX: 600 },
     );
-    try {
+   try {
       await sendOTPEmail(email, otp);
-    console.log(`[REDIS] OTP for ${email}: ${otp}`);
-
-
+      console.log(`[REDIS] OTP for ${email}: ${otp}`); 
     } catch (mailError) {
       console.error("Mail Delivery Failed:", mailError);
-      return res.status(500).send({ message: "Failed to send verification email." });
+      return res
+        .status(HttpStatusCode.INTERNAL_SERVER)
+        .json(create_json_response({}, false, "Failed to send verification email."));
     }
 
-      return res.status(200).send({
-      message: "OTP generated and sent to your email. Please verify.",
-      // otp: otp, 
-      email: email
-    });
-    
+    return res?.status(HttpStatusCode.CREATED)?.json(
+
+   create_json_response(
+        { email }, 
+        true, 
+        "OTP generated and sent to your email. Please verify."
+      )
+  
+  );
   } catch (error: any) {
-    console.error("Signup Error:", error);
-    return res
-      .status(500)
-      .send({ message: error.message || "Error creating user." });
+    return handleError(error, res, "signup");
   }
 };
-
 
 const verifySignup = async (req: any, res: any) => {
   try {
     const { email, otp } = req.body;
     const cachedData = await redisClient.get(`temp_user:${email}`);
-    if (!cachedData) return res.status(400).send({ message: "Expired otp" });
+    if (!cachedData) {
+      throw new APIError(
+        "Invalid Token",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "OTP expired or not found",
+        "OTP expired or not found"
 
+      )
+    }
+    
     const userData = JSON.parse(cachedData);
 
-    if (userData.otp !== otp) return res.status(400).send({ message: "Invalid OTP" });
-    const newUser = await queryRunnerFunc(async (manager) => {
+    if (userData.otp !== otp)
+throw new APIError(
+        "InvalidToken",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "The OTP provided is incorrect.",
+        "The OTP provided is incorrect."
+
+      );     
+      const newUser = await queryRunnerFunc(async (manager) => {
       const address = manager.create(Address, {
-        city: userData.city,          
+        city: userData.city,
         country: userData.country,
-        street: userData.street,       
+        street: userData.street,
         house_number: userData.house_number,
       });
       const savedAddress = await manager.save(Address, address);
@@ -98,28 +122,38 @@ const verifySignup = async (req: any, res: any) => {
         phone_number: userData.phone_number,
         date_of_birth: userData.date_of_birth,
         status: Status.is_inactive,
-        address: savedAddress, 
+        address: savedAddress,
       });
 
       return await manager.save(User, user);
     });
 
     await redisClient.del(`temp_user:${email}`);
-    return res.status(201).send(newUser);
-
-  } catch (error) {
-    console.error(error);
-    return res.status(500).send("Verification failed");
+return res.status(HttpStatusCode.CREATED).json(
+      create_json_response(
+        { 
+          user_id: newUser.id, 
+          email: newUser.email 
+        },
+        true,
+        "Account verified and created successfully!"
+      )
+    );  } catch (error: any) {
+    return handleError(error, res, "verify-signup");
   }
 };
+
+
+
+
 const user_login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
     const user = await User.findOneBy({ email });
     if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ message: "Invalid email or password." });
+      throw new UnauthenticatedError("Invalid email or password");
     }
-user.status = Status.is_active;
+    user.status = Status.is_active;
     const authToken = generateAuthToken({ userId: user.id });
 
     const expiry = new Date();
@@ -128,27 +162,31 @@ user.status = Status.is_active;
     user.token_expires_at = expiry;
     user.status = Status.is_active;
     await user.save();
-    const session = UserSessions.create({
+    const session = UserSessions?.create({
       token: authToken,
       user: user,
       expires_at: expiry,
       is_valid: true,
     });
-    await session.save();
+    await session?.save();
 
-    return res.status(200).json({
-      success: true,
-      token: authToken,
-      user: { id: user.id, full_name: user.full_name },
-    });
+    return res.status(HttpStatusCode.CREATED)?.json(
+      create_json_response(
+        {
+          user: { id: user.id, full_name: user.full_name },
+          token: authToken,
+        },
+        true,
+        "Login successful"
+      )
+      );
   } catch (error) {
-    return res.status(500).json({ message: "Internal Server Error" });
+    return handleError(error, res, "login");
   }
 };
 
-
 const user_logout = async (req: AuthRequest, res: Response) => {
-const authUserId = req.authenticatedUserId;
+  const authUserId = req.authenticatedUserId;
   const authHeader = req.headers.authorization;
   const currentToken = authHeader?.startsWith("Bearer ")
     ? authHeader.split(" ")[1]
@@ -168,21 +206,17 @@ const authUserId = req.authenticatedUserId;
         { is_valid: false },
       );
     }
-    return res.status(200).json({
-      success: true,
-      message: "Successfully logged out. Your token is no longer valid.",
-    });
+    return res.status(HttpStatusCode.CREATED).json(create_json_response(
+     {}, true, "Logout successful"
+    ));
   } catch (error) {
-    console.error("Logout Error:", error);
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error during logout." });
+        return handleError(error, res, "logout");
+
   }
 };
 
 const get_user = async (req: AuthRequest, res: any) => {
-  
-const userId = req.authenticatedUserId;
+  const userId = req.authenticatedUserId;
   try {
     const user = await User.getRepository()
       .createQueryBuilder("user")
@@ -208,13 +242,21 @@ const userId = req.authenticatedUserId;
       .getOne();
 
     if (!user) {
-      return res.status(404).json({ message: "User not found." });
-    }
+throw new APIError(
+        "NotFoundError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "User not found.",
+        "User not found."
+      );     }
 
-    return res.status(200).json(user);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Failed to fetch user data." });
+    return res?.status(HttpStatusCode.CREATED)?.json(create_json_response(
+      {user},
+      true,
+      "User data retrieved successfully"
+    ));
+  } catch (error: any) {
+    return handleError(error, res, "get-user");
   }
 };
 
@@ -222,18 +264,32 @@ const resend_token = async (req: Request, res: Response) => {
   const { email } = req.body;
 
   if (!email) {
-    return res.status(400).json({ message: "Email is required." });
-  }
+throw new APIError(
+        "NoEmail",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Email not provided",
+        "Email not provided"
+
+      );  }
 
   try {
     const user = await User.findOneBy({ email });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found." });
-    }
-if (user.status === Status.is_inactive) {
-      return res.status(401).json({ 
-        message: "Your session has expired or you are logged out. Please login again to receive a new token." 
+throw new APIError(
+        "NotFoundError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "User not found",
+        "User not found"
+      );    }
+
+
+    if (user.status === Status.is_inactive) {
+      return res.status(HttpStatusCode.UNAUTHORIZED).json({
+        message:
+          "Your session has expired or you are logged out. Please login again to receive a new token.",
       });
     }
     const newVerificationToken = generateSixDigitCode({
@@ -246,14 +302,14 @@ if (user.status === Status.is_inactive) {
     user.token_expires_at = newTokenExpiresAt;
     await user.save();
 
-    return res.status(200).json({
-      success: true,
-      message: "New verification token generated and updated in your account.",
-      debug_token: newVerificationToken,
-    });
-  } catch (error) {
-    console.error("Resend Token Error:", error);
-    return res.status(500).json({ message: "Internal server error." });
+    return res.status(HttpStatusCode.CREATED).json(create_json_response(
+            {debug_token: newVerificationToken},
+
+       true,
+       "New verification token generated and updated in your account.",
+    ));
+  } catch (error: any) {
+    return handleError(error, res, "resend-token");
   }
 };
 
@@ -268,8 +324,15 @@ const update_user = async (req: AuthRequest, res: any) => {
         relations: ["address"],
       });
 
-      if (!user) throw { status: 404, message: "User not found." };
-
+      if (!user) {
+        throw new APIError(
+        "NotFoundError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "User not found.",
+        "User not found."
+      );   
+      }
       Object.assign(user, otherData);
 
       if (user.address) {
@@ -286,13 +349,16 @@ const update_user = async (req: AuthRequest, res: any) => {
       return await manager.save(User, user);
     });
 
-    return res.status(200).json({
-      message: "Profile and address updated successfully.",
-      user: result,
-    });
-  } catch (err: any) {
-    console.error("Update Error:", err);
-    return res.status(err.status || 500).json({ message: err.message || "Update failed." });
+    return res.status(HttpStatusCode.CREATED).json(
+create_json_response(
+        {user: result},
+        true,
+      "Profile and address updated successfully.",
+)
+   
+    );
+  } catch (error: any) {
+    return handleError(error, res, "update-user");
   }
 };
 
@@ -300,35 +366,50 @@ const forgot_password = async (req: Request, res: Response) => {
   const { email } = req.body;
 
   if (!email) {
-    return res.status(400).json({ message: "Email is required." });
-  }
+throw new APIError(
+        "EmailNeeded",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Email required.",
+        "Email required"
+      )  }
 
   try {
     const user = await User.findOneBy({ email });
     if (!user) {
-      return res
-        .status(200)
-        .json({ message: "If that email exists, an OTP has been sent." });
+      return res.status(HttpStatusCode.OK).json(
+        create_json_response(
+          {}, 
+          true, 
+          "If that email exists, an OTP has been sent."
+        )
+      );
     }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await redisClient.set(`reset_otp:${email}`, otp, { EX: 300 });
     console.log(`[REDIS] OTP for ${email}: ${otp}`);
 
-   try {
+    try {
       await sendOTPForPasswordReset(email, otp);
     } catch (mailError) {
       console.error("Mail Delivery Failed:", mailError);
-      return res.status(500).send({ message: "Failed to send verification email." });
+      throw new APIError(
+        "MailError",
+        HttpStatusCode.INTERNAL_SERVER,
+        true,
+        "Failed to send reset email",
+                "Failed to send reset email"
+
+      );
     }
 
-    return res.status(200).json({
-      success: true,
-      message: "OTP sent successfully to your email.",
-      // otp: otp,
-    });
-  } catch (error) {
-    console.error("Forgot Password Error:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res.status(HttpStatusCode.CREATED).json(create_json_response(
+        { email }, 
+        true, 
+        "OTP sent successfully to your email."
+      ));
+  } catch (error: any) {
+    return handleError(error, res, "forgot-password");
   }
 };
 const verify_otp = async (req: Request, res: Response) => {
@@ -338,34 +419,65 @@ const verify_otp = async (req: Request, res: Response) => {
     const storedOtp = await redisClient.get(`reset_otp:${email}`);
 
     if (!storedOtp || storedOtp !== otp) {
-      return res.status(400).json({ message: "Invalid or expired OTP." });
-    }
+ throw new APIError(
+        "Invalid Token",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Invalid or expired OTP",
+        "Invalid or expired OTP"
+
+      )    }
 
     const user = await User.findOneBy({ email });
-    if (!user) return res.status(404).json({ message: "User not found." });
+    if (!user) {
+      throw new APIError(
+        "NotFoundError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "User not found.",
+        "User not found."
+      );  
+    }
 
     await redisClient.del(`reset_otp:${email}`);
     if (!user.token) {
-      return res.status(401).json({ message: "No active session found. Please login first." });
+
+throw new APIError(
+        "UnauthorizedError",
+        HttpStatusCode.UNAUTHORIZED,
+        true,
+        "No active session found. Please login first.",
+        "No active session found. Please login first."
+      );  
     }
 
-    return res.status(200).json({
-      success: true,
-      message: "OTP verified."
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res.status(HttpStatusCode.CREATED).json(
+      create_json_response(
+        {email}, true, "OTP verified."
+      )
+  
+  );
+  } catch (error: any) {
+    return handleError(error, res, "verify-otp");
+
   }
 };
 
 const reset_password = async (req: Request, res: Response) => {
   const { newPassword } = req.body;
   const authHeader = req.headers.authorization;
-  const tokenFromHeader = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+  const tokenFromHeader = authHeader?.startsWith("Bearer ")
+    ? authHeader.split(" ")[1]
+    : null;
 
   if (!tokenFromHeader) {
-    return res.status(401).json({ message: "Token is required." });
+    throw new APIError(
+        "UnauthorizedError",
+        HttpStatusCode.UNAUTHORIZED,
+        true,
+        "Token is required",
+        "Token is required"
+      );
   }
 
   try {
@@ -374,24 +486,35 @@ const reset_password = async (req: Request, res: Response) => {
 
     const user = await User.findOneBy({ id: userIdFromToken });
     if (!user || user.token !== tokenFromHeader) {
-      return res.status(401).json({ message: "Invalid or mismatched session token." });
+     throw new APIError(
+        "UnauthorizedError",
+        HttpStatusCode.UNAUTHORIZED,
+        true,
+        "Invalid or mismatched session token",
+        "Invalid or mismatched session token"
+      ); 
     }
     user.password = await encrypt_password(newPassword);
-    
- 
+
     user.token = null;
     user.token_expires_at = null;
     user.status = Status.is_inactive;
-    
-    await user.save();
-      await UserSessions.update({ user: { id: user.id } }, { is_valid: false });
 
-    return res.status(200).json({
-      success: true,
-      message: "Password reset successful. Please login with your new password.",
-    });
-  } catch (error) {
-    return res.status(401).json({ message: "Invalid session." });
+    await user.save();
+    await UserSessions.update({ user: { id: user.id } }, { is_valid: false });
+
+    return res.status(HttpStatusCode.CREATED)?.json(
+      create_json_response(
+        {}, true,  "Password reset successful. Please login with your new password."
+      )
+    //   {
+    //   success: true,
+    //   message:
+    //     "Password reset successful. Please login with your new password.",
+    // }
+  );
+  } catch (error: any) {
+    return handleError(error, res, "reset-password");
   }
 };
 
@@ -402,26 +525,39 @@ const delete_user = async (req: any, res: any) => {
     await queryRunnerFunc(async (manager) => {
       const user = await manager.findOne(User, {
         where: { id: targetUserId },
-        relations: ["address"] 
+        relations: ["address"],
       });
 
-      if (!user) throw { status: 404, message: "User not found." };
-      
+      if (!user) {
+        throw new APIError(
+        "NotFoundError",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "User not found.",
+        "User not found."
+      );  
+      }
+
       const addressId = user.address?.id;
 
       await manager.delete("Transaction", { user: { id: targetUserId } });
       await manager.delete("Asset", { user: { id: targetUserId } });
       await manager.delete("UserSessions", { user: { id: targetUserId } });
       await manager.delete(User, { id: targetUserId });
-      
+
       if (addressId) {
         await manager.delete(Address, { id: addressId });
       }
     });
 
-    return res.status(200).send({ message: "Deleted successfully." });
+    return res.status(HttpStatusCode.CREATED).json(
+      // { message: "Deleted successfully." }
+      create_json_response(
+        {}, true, "Deleted successfully"
+      )
+    );
   } catch (error: any) {
-    return res.status(error.status || 500).send({ message: error.message });
+    return handleError(error, res, "delete-user");
   }
 };
 export {

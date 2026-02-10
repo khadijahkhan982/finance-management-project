@@ -2,9 +2,11 @@ import { Transaction } from "../entities/Transaction";
 import { User } from "../entities/User";
 import { Category } from "../entities/Category";
 import { Asset } from "../entities/Asset";
-import { TransactionType } from "../utils/enums";
+import { HttpStatusCode, TransactionType } from "../utils/enums";
 import { Request, Response } from "express";
 import { queryRunnerFunc } from "../utils/query_runner";
+import { APIError } from "../errors/api-error";
+import { create_json_response, handleError } from "../utils/helper";
 
 interface AuthRequest extends Request {
   authenticatedUserId?: number;
@@ -14,8 +16,13 @@ const create_transaction = async (req: AuthRequest, res: Response) => {
     req.body;
 
   if (!amount || !transaction_type || !assetId || !category_id) {
-    return res.status(400).send({ message: "Required properties missing." });
-  }
+ throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Required properties missing",
+        "Required properties missing"
+      );  }
   const authUserId = req.authenticatedUserId;
   try {
     const result = await queryRunnerFunc(async (manager) => {
@@ -25,16 +32,27 @@ const create_transaction = async (req: AuthRequest, res: Response) => {
         manager.findOneBy(Category, { id: category_id }),
       ]);
       if (!user || !asset || !category) {
-        throw { status: 404, message: "User, Asset, or Category not found." };
-      }
+         throw new APIError(
+        "BadRequestError",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "User, Asset, or Category not found",
+        "User, Asset, or Category not found"
+      );      }
 
       const transactionAmount = Number(amount);
       if (transaction_type === TransactionType.deposit) {
         asset.current_cost = Number(asset.current_cost) + transactionAmount;
       } else if (transaction_type === TransactionType.withdrawal) {
         if (Number(asset.current_cost) < transactionAmount) {
-          throw { status: 400, message: "Not enough balance." };
-        }
+throw new APIError(
+        "NegativeBalance",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Not enough balance",
+        "Not enough balance"
+
+      )        }
         asset.current_cost = Number(asset.current_cost) - transactionAmount;
       }
       const transaction = manager.create(Transaction, {
@@ -52,18 +70,16 @@ const create_transaction = async (req: AuthRequest, res: Response) => {
         transaction_id: transaction.id,
       };
     });
-    return res.status(201).json({
-      success: true,
-      message: "Transaction completed successfully",
-      ...result,
-    });
-  } catch (err: any) {
-    const statusCode = err.status || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Transaction Error:", err);
-    return res.status(statusCode).json({ message });
-  }
+    return res.status(HttpStatusCode.CREATED).json(
+      create_json_response(
+          {...result},
+       true,
+       "Transaction completed successfully"
+      )
+    );
+  } catch (error: any) {
+      return handleError(error, res, "create-transaction");
+    }
 };
 
 const update_transaction = async (req: AuthRequest, res: Response) => {
@@ -72,19 +88,31 @@ const update_transaction = async (req: AuthRequest, res: Response) => {
   const { amount, transaction_type, description } = req.body;
 
   if (isNaN(transactionId)) {
-    return res.status(400).json({ message: "Invalid transaction ID." });
-  }
+throw new APIError(
+        "Invalid ID",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Invalid transaction ID",
+        "Invalid transaction ID"
+
+      )  }
 
   try {
-    const result = await queryRunnerFunc(async (manager) => {
+      const result = await queryRunnerFunc(async (manager) => {
       const transaction = await manager.findOne(Transaction, {
         where: { id: transactionId, user: { id: authUserId } },
         relations: ["asset"],
       });
 
       if (!transaction || !transaction.asset) {
-        throw { status: 404, message: "Transaction or Asset not found." };
-      }
+throw new APIError(
+        "NotFound",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Transaction or asset not found",
+        "Transaction or asset not found"
+
+      )      }
 
       const asset = transaction.asset;
       const oldAmount = Number(transaction.amount);
@@ -106,11 +134,14 @@ const update_transaction = async (req: AuthRequest, res: Response) => {
         asset.current_cost = Number(asset.current_cost) - updatedAmount;
       }
       if (Number(asset.current_cost) < 0) {
-        throw {
-          status: 400,
-          message: "Not enough balance for this update.",
-          current_balance_before_update: oldAmount,
-        };
+        throw new APIError(
+        "Negative Balance",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Not enough balance for this transaction",
+        "Not enough balance for this transaction"
+
+      )
       }
       await manager.save([asset, transaction]);
 
@@ -120,16 +151,17 @@ const update_transaction = async (req: AuthRequest, res: Response) => {
       };
     });
 
-    return res.status(200).json({
-      message: "Transaction updated and balance recalculated.",
-      ...result,
-    });
+    return res.status(HttpStatusCode.OK).json(
+      create_json_response( 
+          { ...result},
+          true,
+       "Transaction updated and balance recalculated.",
+   )
+   
+  );
   } catch (err: any) {
-    const statusCode = err.status || 500;
-    const message = err.message || "Internal Server Error";
+       return handleError(err, res, "update-transaction");
 
-    console.error("Update Transaction Error:", err);
-    return res.status(statusCode).json({ message, ...err });
   }
 };
 
@@ -138,8 +170,14 @@ const get_transaction = async (req: AuthRequest, res: Response) => {
   const authUserId = req.authenticatedUserId;
 
   if (isNaN(transactionId)) {
-    return res.status(400).send({ message: "Invalid transaction ID." });
-  }
+    throw new APIError(
+        "Invalid Transaction ID",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Invalid transaction ID",
+        "Invalid transaction ID"
+
+      )  }
 
   try {
     const transaction = await Transaction.getRepository()
@@ -164,19 +202,26 @@ const get_transaction = async (req: AuthRequest, res: Response) => {
       })
       .getOne();
     if (!transaction) {
-      return res.status(404).json({
-        message:
-          "Transaction not found or you do not have permission to view it.",
-      });
+         throw new APIError(
+        "Not found",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Transaction not found or you don't have viewing permissions",
+        "Transaction not found or you don't have viewing permissions"
+
+      )
     }
 
-    return res.status(200).json({
-      success: true,
-      transaction,
-    });
-  } catch (error) {
-    console.error("Error in getting transaction:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res.status(HttpStatusCode.OK).json(
+      create_json_response(
+        {transaction},
+        true,
+        "Data retrieved successfully"
+
+      )
+  )
+  } catch (error: any) {
+   return handleError(error, res, "get-transaction")
   }
 };
 const get_all_transactions = async (req: AuthRequest, res: Response) => {
@@ -249,20 +294,25 @@ const get_all_transactions = async (req: AuthRequest, res: Response) => {
       .take(pageLimit);
     const [transactions, total] = await query.getManyAndCount();
 
-    return res.status(200).json({
-      success: true,
-      meta: {
+    return res.status(HttpStatusCode.OK).json(
+
+
+      create_json_response(
+       { meta: {
         total_items: total,
         total_pages: Math.ceil(total / pageLimit),
         current_page: pageNum,
         per_page: pageLimit,
         item_count: transactions.length,
       },
-      transactions,
-    });
-  } catch (error) {
-    console.error("Error getting all transactions:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+      transactions},
+      true,
+      "All transactions retrieved successfully"
+      )
+      
+    );
+  } catch (error: any) {
+    return handleError(error, res, "get all")
   }
 };
 
@@ -271,8 +321,14 @@ const delete_transaction = async (req: AuthRequest, res: Response) => {
   const authUserId = req.authenticatedUserId;
 
   if (isNaN(transactionId)) {
-    return res.status(400).json({ message: "Invalid transaction ID format." });
-  }
+ throw new APIError(
+        "Invalid Token",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Ivalid transaction ID format",
+        "Ivalid transaction ID format"
+
+      )  }
 
   try {
     const result = await queryRunnerFunc(async (manager) => {
@@ -282,10 +338,14 @@ const delete_transaction = async (req: AuthRequest, res: Response) => {
       });
 
       if (!transaction || !transaction.asset) {
-        throw {
-          status: 404,
-          message: "Transaction not found or unauthorized.",
-        };
+        throw new APIError(
+        "Not found",
+        HttpStatusCode.NOT_FOUND,
+        true,
+        "Transaction or asset not found or unauthorized",
+        "Transaction or asset not found or unauthorized"
+
+      )
       }
 
       const asset = transaction.asset;
@@ -298,28 +358,31 @@ const delete_transaction = async (req: AuthRequest, res: Response) => {
       }
 
       if (asset.current_cost < 0) {
-        throw {
-          status: 400,
-          message:
-            "Can't delete this transaction because it would result in a negative balance.",
-        };
+          throw new APIError(
+        "Invalid",
+        HttpStatusCode.BAD_REQUEST,
+        true,
+        "Deleting this transaction will result in negative balance",
+        "Deleting this transaction will result in negative balance"
+
+      )
       }
 
       await manager.save(asset);
       await manager.remove(transaction);
       return asset.current_cost;
     });
-    return res.status(200).json({
-      success: true,
-      message: "Transaction deleted and asset balance restored.",
-      updated_asset_cost: result,
-    });
-  } catch (err: any) {
-    const statusCode = err.status || 500;
-    const message = err.message || "Internal Server Error";
+    return res.status(HttpStatusCode.OK).json(
+      create_json_response(
+            {  updated_asset_cost: result},
+            true,
+            "Transaction deleted and asset balance restored.",
 
-    console.error("Error in deleting transaction:", err);
-    return res.status(statusCode).json({ message });
+      )
+  
+  );
+  } catch (err: any) {
+return handleError(err, res, "delete")
   }
 };
 export {

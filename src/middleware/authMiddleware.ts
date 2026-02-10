@@ -14,7 +14,6 @@ export const protect = async (req: any, res: any, next: any) => {
 
     const userId = Number(decoded.userId);
 
-    // Verify user exists and token matches (for active session tracking)
     const user = await User.findOneBy({ id: userId, token: token });
 
     if (!user) {
