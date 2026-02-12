@@ -214,7 +214,7 @@ const user_logout = async (req: AuthRequest, res: Response) => {
 };
 
 const get_user = async (req: AuthRequest, res: any) => {
-  const userId = req.authenticatedUserId;
+  const authUserId= req.authenticatedUserId;
   try {
     const user = await User.getRepository()
       .createQueryBuilder("user")
@@ -236,7 +236,7 @@ const get_user = async (req: AuthRequest, res: any) => {
         "address.street",
         "address.house_number",
       ])
-      .where("user.id = :id", { id: userId })
+      .where("user.id = :id", { id: authUserId})
       .getOne();
 
     if (!user) {
@@ -319,13 +319,13 @@ const resend_token = async (req: Request, res: Response) => {
 };
 
 const update_user = async (req: AuthRequest, res: any) => {
-  const targetUserId = req.authenticatedUserId;
-  const { password, date_of_birth, ...otherData } = req.body;
+  const authUserId = req.authenticatedUserId;
+  const { password, date_of_birth,user_id, ...otherData } = req.body;
 
   try {
     const result = await queryRunnerFunc(async (manager) => {
       const user = await manager.findOne(User, {
-        where: { id: targetUserId },
+        where: { id: authUserId },
         relations: ["address"],
       });
 
@@ -350,6 +350,7 @@ const update_user = async (req: AuthRequest, res: any) => {
       if (password) {
         user.password = await encrypt_password(password);
       }
+    
 
       return await manager.save(User, user);
     });
@@ -516,11 +517,6 @@ const reset_password = async (req: Request, res: Response) => {
         true,
         "Password reset successful. Please login with your new password.",
       ),
-      //   {
-      //   success: true,
-      //   message:
-      //     "Password reset successful. Please login with your new password.",
-      // }
     );
   } catch (error: any) {
     return handleError(error, res, "reset-password");
@@ -528,12 +524,12 @@ const reset_password = async (req: Request, res: Response) => {
 };
 
 const delete_user = async (req: any, res: any) => {
-  const targetUserId = Number(req.params.userId);
+  const authUserId = req.authenticatedUserId;
 
   try {
     await queryRunnerFunc(async (manager) => {
       const user = await manager.findOne(User, {
-        where: { id: targetUserId },
+        where: { id: authUserId },
         relations: ["address"],
       });
 
@@ -549,10 +545,10 @@ const delete_user = async (req: any, res: any) => {
 
       const addressId = user.address?.id;
 
-      await manager.delete("Transaction", { user: { id: targetUserId } });
-      await manager.delete("Asset", { user: { id: targetUserId } });
-      await manager.delete("UserSessions", { user: { id: targetUserId } });
-      await manager.delete(User, { id: targetUserId });
+      await manager.delete("Transaction", { user: { id: authUserId } });
+      await manager.delete("Asset", { user: { id: authUserId } });
+      await manager.delete("UserSessions", { user: { id: authUserId } });
+      await manager.delete(User, { id: authUserId });
 
       if (addressId) {
         await manager.delete(Address, { id: addressId });

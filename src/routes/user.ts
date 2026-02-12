@@ -10,15 +10,14 @@ import { validate, validateOwnership } from "../middleware/validation";
 const router = express.Router()
 router.post('/signup', validate(signupSchema), signup);
 router.post('/resend-token', resend_token)
-router.post('/logout/:userId', protect, validateOwnership, user_logout)
-router.get('/user/:userId', protect, validateOwnership, get_user)
-router.put('/user/:userId', protect,validateOwnership, update_user)
-router.delete('/user/:userId', protect, validateOwnership, delete_user)
+router.post('/logout', protect, user_logout)
 router.post('/login', user_login)
-
 router.post('/forgot-password', forgot_password)
 router.post('/verify-otp', verify_otp)
 router.post('/reset-password', reset_password)
 router.post('/verify-signup', verifySignup)
 
+router.get('/get-user', protect, get_user)
+router.put('/update-user', protect, update_user)
+router.delete('/delete-user', protect, delete_user)
 export default router;

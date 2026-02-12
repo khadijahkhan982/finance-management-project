@@ -25,11 +25,11 @@ export const validate = (schema: ZodTypeAny) =>
   };
 
 export const validateOwnership = (req: any, res: Response, next: NextFunction) => {
-  const targetId = Number(req.params.userId);
+const targetId = Number(req.params.userId || req.body.user_id);
   const authId = Number(req.authenticatedUserId);
 
-  if (!authId) {
-    return res.status(500).json({ message: "Auth ID missing. Is 'protect' middleware applied?" });
+  if (!targetId) {
+    return res.status(400).json({ message: "Target User ID is required." });
   }
 
   if (targetId !== authId) {
