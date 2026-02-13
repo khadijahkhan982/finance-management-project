@@ -50,34 +50,31 @@ const create_category = async (
 };
 
 const update_category = async (req: Request, res: Response) => {
-  const categoryId = Number(req.params.category_Id);
+  const { category_id, name, type } = req.body;
+  const cId = Number(category_id);
 
-  if (isNaN(categoryId)) {
+  if (!cId || isNaN(cId)) {
     throw new APIError(
       "BadRequestError",
       HttpStatusCode.BAD_REQUEST,
       true,
-      "Invalid category ID",
-      "Invalid category ID",
+      "Valid category_id is required in the request body.",
     );
   }
-
-  const { name, type } = req.body;
-
   try {
-    const category = await Category.findOneBy({ id: categoryId });
+    const category = await Category.findOneBy({ id: cId });
 
     if (!category) {
       throw new APIError(
-        "BadRequestError",
+        "NotFoundError",
         HttpStatusCode.NOT_FOUND,
         true,
-        "Category not found",
         "Category not found",
       );
     }
     if (name) category.name = name;
     if (type) category.type = type;
+
     await category.save();
 
     return res
